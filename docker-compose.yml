@@ -1,0 +1,35 @@
+services:
+  lexos-gateway:
+    build: 
+      context: ./gateway
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./gateway:/app
+    depends_on:
+      - redis
+    environment:
+      - REDIS_URL=redis:6379
+
+  lexos-worker:
+    build: 
+      context: ./worker
+      dockerfile: Dockerfile
+    volumes:
+      - ./worker:/app
+    depends_on:
+      - redis
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+    environment:
+      - REDIS_URL=redis:6379
+      - OMP_NUM_THREADS=2
+
+  redis:
+    image: "redis:8.8.0-alpine"
+    ports:
+      - "6379:6379"

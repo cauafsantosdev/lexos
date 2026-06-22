@@ -1,0 +1,4 @@
+redis==8.0.0
+faster-whisper==1.2.1
+onnxruntime==1.26.0
+fastembed==0.8.0
