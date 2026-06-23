@@ -251,3 +251,4 @@ go.work.sum
 # .vscode/
 
 */tmp/*
+uploads/*

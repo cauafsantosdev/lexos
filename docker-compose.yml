@@ -7,6 +7,7 @@ services:
       - "8000:8000"
     volumes:
       - ./gateway:/app
+      - ./uploads:/uploads
     depends_on:
       - redis
     environment:
@@ -18,6 +19,8 @@ services:
       dockerfile: Dockerfile
     volumes:
       - ./worker:/app
+      - ./uploads:/uploads
+      - ./models:/models
     depends_on:
       - redis
     deploy:
@@ -28,6 +31,7 @@ services:
     environment:
       - REDIS_URL=redis:6379
       - OMP_NUM_THREADS=2
+      - HF_HOME=/models
 
   redis:
     image: "redis:8.8.0-alpine"
