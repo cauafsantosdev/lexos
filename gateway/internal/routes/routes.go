@@ -10,8 +10,11 @@ import (
 func Register(e *echo.Echo) {
 	e.GET("/health", handlers.HealthCheck)
 	
-	// Faster-Whisper Service Endpoint
+	// Scriber Service Endpoint
 	e.POST("/transcribe", handlers.HandleTranscriptionRequest)
+
+	// Distiller Service Endpoint
+	e.POST("/summarize", handlers.HandleSummarizationRequest)
 
 	// Task Retrieval Endpoint
 	e.GET("/task/:id", handlers.GetTranscriptionResult)
