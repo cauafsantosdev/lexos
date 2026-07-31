@@ -15,6 +15,12 @@ func Register(e *echo.Echo) {
 
 	// Distiller Service Endpoint
 	e.POST("/summarize", handlers.HandleSummarizationRequest)
+	
+	// Gleaner Service Indexing Endpoint
+	e.POST("/glean/index", handlers.IndexDocument)
+
+	// Gleaner Service QA Endpoint
+	e.GET("/glean/ask", handlers.StreamQA)
 
 	// Task Retrieval Endpoint
 	e.GET("/task/:id", handlers.GetTranscriptionResult)
