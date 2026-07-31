@@ -1,18 +1,9 @@
 import os
-from faster_whisper import WhisperModel
 from utils.logger import get_logger
+from utils.model_manager import get_whisper_model
 
 
 logger = get_logger("scriber")
-
-logger.info("Loading Faster-Whisper model (small, int8)...")
-try:
-    # Enforce "cpu" and "int8" quantization
-    MODEL = WhisperModel("small", device="cpu", compute_type="int8")
-    logger.info("Faster-Whisper model loaded successfully.")
-except Exception as e:
-    logger.error(f"Failed to load Faster-Whisper: {e}")
-    MODEL = None
 
 def transcribe_audio(file_path: str) -> dict:
     """
@@ -31,7 +22,10 @@ def transcribe_audio(file_path: str) -> dict:
         RuntimeError: If the Faster-Whisper model failed to initialize on startup.
         FileNotFoundError: If the audio file does not exist at the specified path.
     """
-    if not MODEL:
+    # Fetch the lazy-loaded singleton model
+    model = get_whisper_model()
+    
+    if not model:
         raise RuntimeError("Faster-Whisper model is not initialized.")
         
     if not os.path.exists(file_path):
@@ -40,7 +34,7 @@ def transcribe_audio(file_path: str) -> dict:
     logger.info(f"Starting audio transcription for {os.path.basename(file_path)}...")
     
     # beam_size=5 provides a balance between accuracy and speed.
-    segments, info = MODEL.transcribe(file_path, beam_size=5)
+    segments, info = model.transcribe(file_path, beam_size=5)
     
     full_text = ""
     for segment in segments:
