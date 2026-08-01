@@ -8,6 +8,7 @@ package main
 
 import (
 	"log"
+	"net/http"
 
 	"lexos-gateway/internal/queue"
 	"lexos-gateway/internal/routes"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"golang.org/x/time/rate"
 )
 
 func main() {
@@ -30,8 +32,38 @@ func main() {
 
 	// Setup Echo
 	e := echo.New()
-	e.Use(middleware.RequestLogger())
+	
+	// Standard Middleware
+	e.Use(middleware.RequestLoggerWithConfig(middleware.RequestLoggerConfig{
+		LogStatus: true,
+		LogURI:    true,
+		LogMethod: true,
+		LogValuesFunc: func(c echo.Context, v middleware.RequestLoggerValues) error {
+			log.Printf("URI: %v | Method: %v | Status: %v\n", v.URI, v.Method, v.Status)
+			return nil
+		},
+	}))
 	e.Use(middleware.Recover())
+
+	// Global Rate Limiting. Protects the server from connection floods (20 req/sec)
+	globalRateLimit := middleware.RateLimiterConfig{
+		Skipper: middleware.DefaultSkipper,
+		Store: middleware.NewRateLimiterMemoryStoreWithConfig(
+			middleware.RateLimiterMemoryStoreConfig{
+				Rate:  rate.Limit(20),
+				Burst: 50,
+			},
+		),
+		IdentifierExtractor: func(ctx echo.Context) (string, error) {
+			return ctx.RealIP(), nil
+		},
+		DenyHandler: func(context echo.Context, identifier string, err error) error {
+			return context.JSON(http.StatusTooManyRequests, map[string]string{
+				"error": "Server is receiving too many requests. Please slow down.",
+			})
+		},
+	}
+	e.Use(middleware.RateLimiterWithConfig(globalRateLimit))
 
 	// Register routes
 	routes.Register(e)
