@@ -4,11 +4,17 @@ import (
 	"lexos-gateway/internal/handlers"
 
 	"github.com/labstack/echo/v4"
+
+	_ "lexos-gateway/docs"
+	echoSwagger "github.com/swaggo/echo-swagger"
 )
 
 // Register wires up all the API endpoints
 func Register(e *echo.Echo) {
 	e.GET("/health", handlers.HealthCheck)
+
+	// Swagger UI Route
+	e.GET("/swagger/*", echoSwagger.WrapHandler)
 	
 	// Scriber Service Endpoint
 	e.POST("/transcribe", handlers.HandleTranscriptionRequest)

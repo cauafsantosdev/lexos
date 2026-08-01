@@ -19,7 +19,17 @@ type TaskPayload struct {
 	Type     string `json:"type"`
 }
 
-// HandleTranscriptionRequest validates the upload, streams it to MinIO, and queues the task
+// HandleTranscriptionRequest godoc
+// @Summary Submit audio for transcription
+// @Description Uploads an audio file to MinIO and queues it for transcription using Faster-Whisper.
+// @Tags Scriber
+// @Accept multipart/form-data
+// @Produce json
+// @Param audio formData file true "Audio file to transcribe"
+// @Success 202 {object} map[string]string "Task queued successfully"
+// @Failure 400 {object} map[string]string "Missing audio file"
+// @Failure 500 {object} map[string]string "Internal server error"
+// @Router /transcribe [post]
 func HandleTranscriptionRequest(c echo.Context) error {
 	// Parse the uploaded audio file from the form
 	fileHeader, err := c.FormFile("audio")

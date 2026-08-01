@@ -9,7 +9,16 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-// GetTaskState fetches the live task state directly from Redis Hashes
+// GetTaskState godoc
+// @Summary Get the status of an async task
+// @Description Fetches the current processing state and result URLs for a given task ID.
+// @Tags Core
+// @Accept json
+// @Produce json
+// @Param id path string true "Task ID"
+// @Success 200 {object} map[string]interface{} "Task state details"
+// @Failure 404 {object} map[string]string "Task not found"
+// @Router /task/{id} [get]
 func GetTaskState(c echo.Context) error {
 	taskID := c.Param("id")
 	taskHashKey := fmt.Sprintf("task:%s", taskID)

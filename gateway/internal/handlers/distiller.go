@@ -20,7 +20,20 @@ type SummarizeRequest struct {
 	Style        string `json:"style"`
 }
 
-// HandleSummarizationRequest routes the request based on Content-Type, streams files to MinIO, and queues the task
+// HandleSummarizationRequest godoc
+// @Summary Submit a document for AI summarization
+// @Description Uploads a text payload or a document (.txt, .pdf, .docx) to MinIO and queues it for Map-Reduce summarization by Qwen3.
+// @Tags Distiller
+// @Accept multipart/form-data
+// @Accept json
+// @Produce json
+// @Param document formData file false "Document to summarize (if using multipart)"
+// @Param style formData string false "Summary style (bullet_points, short_paragraph, executive)"
+// @Param body body SummarizeRequest false "JSON payload (if using application/json)"
+// @Success 202 {object} map[string]string "Task queued successfully"
+// @Failure 400 {object} map[string]string "Invalid request"
+// @Failure 500 {object} map[string]string "Internal server error"
+// @Router /summarize [post]
 func HandleSummarizationRequest(c echo.Context) error {
 	contentType := c.Request().Header.Get("Content-Type")
 	taskID := fmt.Sprintf("task_%d", time.Now().UnixNano())

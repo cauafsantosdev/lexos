@@ -5,6 +5,7 @@ WORKDIR /app
 RUN apk add --no-cache git build-base
 
 RUN go install github.com/air-verse/air@latest
+RUN go install github.com/swaggo/swag/cmd/swag@latest
 
 COPY go.mod go.sum ./
 

@@ -1,5 +1,11 @@
 package main
 
+// @title Lexos API
+// @version 1.0
+// @description The cloud-native API gateway for the Lexos AI document processing engine.
+// @host localhost:8000
+// @BasePath /
+
 import (
 	"log"
 

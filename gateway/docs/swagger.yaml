@@ -1,0 +1,215 @@
+basePath: /
+definitions:
+  handlers.SummarizeRequest:
+    properties:
+      document_text:
+        type: string
+      style:
+        type: string
+    type: object
+host: localhost:8000
+info:
+  contact: {}
+  description: The cloud-native API gateway for the Lexos AI document processing engine.
+  title: Lexos API
+  version: "1.0"
+paths:
+  /glean/ask:
+    get:
+      description: Submits a query against a previously indexed document and streams
+        the AI's answer token-by-token via Server-Sent Events (SSE).
+      parameters:
+      - description: The task_id of the previously indexed document
+        in: query
+        name: document_id
+        required: true
+        type: string
+      - description: The user's question
+        in: query
+        name: query
+        required: true
+        type: string
+      produces:
+      - text/event-stream
+      responses:
+        "200":
+          description: SSE Stream
+          schema:
+            type: string
+        "400":
+          description: Missing parameters
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Ask a question against an indexed document
+      tags:
+      - Gleaner
+  /glean/index:
+    post:
+      consumes:
+      - multipart/form-data
+      description: Streams a document to MinIO, chunks it, embeds it via FastEmbed,
+        and builds a FAISS index in the background.
+      parameters:
+      - description: Document to index (.txt, .pdf, .docx)
+        in: formData
+        name: document
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Document queued for indexing
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Missing document file
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Upload document for vector indexing
+      tags:
+      - Gleaner
+  /health:
+    get:
+      description: Returns the current status of the Lexos Gateway.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: API is healthy
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Check API health
+      tags:
+      - Core
+  /summarize:
+    post:
+      consumes:
+      - multipart/form-data
+      - application/json
+      description: Uploads a text payload or a document (.txt, .pdf, .docx) to MinIO
+        and queues it for Map-Reduce summarization by Qwen3.
+      parameters:
+      - description: Document to summarize (if using multipart)
+        in: formData
+        name: document
+        type: file
+      - description: Summary style (bullet_points, short_paragraph, executive)
+        in: formData
+        name: style
+        type: string
+      - description: JSON payload (if using application/json)
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/handlers.SummarizeRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Task queued successfully
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Invalid request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Submit a document for AI summarization
+      tags:
+      - Distiller
+  /task/{id}:
+    get:
+      consumes:
+      - application/json
+      description: Fetches the current processing state and result URLs for a given
+        task ID.
+      parameters:
+      - description: Task ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Task state details
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Task not found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get the status of an async task
+      tags:
+      - Core
+  /transcribe:
+    post:
+      consumes:
+      - multipart/form-data
+      description: Uploads an audio file to MinIO and queues it for transcription
+        using Faster-Whisper.
+      parameters:
+      - description: Audio file to transcribe
+        in: formData
+        name: audio
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Task queued successfully
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Missing audio file
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Submit audio for transcription
+      tags:
+      - Scriber
+swagger: "2.0"

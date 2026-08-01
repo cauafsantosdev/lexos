@@ -13,7 +13,17 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-// IndexDocument handles uploading a file, streaming it to MinIO, and queuing the indexing task
+// IndexDocument godoc
+// @Summary Upload document for vector indexing
+// @Description Streams a document to MinIO, chunks it, embeds it via FastEmbed, and builds a FAISS index in the background.
+// @Tags Gleaner
+// @Accept multipart/form-data
+// @Produce json
+// @Param document formData file true "Document to index (.txt, .pdf, .docx)"
+// @Success 202 {object} map[string]string "Document queued for indexing"
+// @Failure 400 {object} map[string]string "Missing document file"
+// @Failure 500 {object} map[string]string "Internal server error"
+// @Router /glean/index [post]
 func IndexDocument(c echo.Context) error {
 	// Parse the uploaded file from the form
 	fileHeader, err := c.FormFile("document")
@@ -65,7 +75,17 @@ func IndexDocument(c echo.Context) error {
 	})
 }
 
-// StreamQA handles user questions, triggers the QA queue, and streams the response via SSE
+// StreamQA godoc
+// @Summary Ask a question against an indexed document
+// @Description Submits a query against a previously indexed document and streams the AI's answer token-by-token via Server-Sent Events (SSE).
+// @Tags Gleaner
+// @Produce text/event-stream
+// @Param document_id query string true "The task_id of the previously indexed document"
+// @Param query query string true "The user's question"
+// @Success 200 {string} string "SSE Stream"
+// @Failure 400 {object} map[string]string "Missing parameters"
+// @Failure 500 {object} map[string]string "Internal server error"
+// @Router /glean/ask [get]
 func StreamQA(c echo.Context) error {
 	documentID := c.QueryParam("document_id")
 	query := c.QueryParam("query")
