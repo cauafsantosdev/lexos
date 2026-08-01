@@ -6,6 +6,7 @@ import faiss
 from functools import lru_cache
 from utils.logger import get_logger
 from utils.model_manager import get_embedding_model, get_llm
+from utils.s3 import get_s3_client
 
 
 logger = get_logger("gleaner_qa")
@@ -27,16 +28,21 @@ def _get_index_and_meta(document_id: str) -> tuple:
     Returns:
         tuple: A tuple containing the loaded (faiss.IndexFlatIP, dict metadata).
     """
-    index_path = os.path.join("/uploads", f"{document_id}.faiss")
-    meta_path = os.path.join("/uploads", f"{document_id}_meta.json")
+    local_index_path = f"/tmp/{document_id}.faiss"
+    local_meta_path = f"/tmp/{document_id}_meta.json"
     
-    if not os.path.exists(index_path) or not os.path.exists(meta_path):
-        raise FileNotFoundError(f"Document index {document_id} not found. Please index it first.")
+    client, bucket = get_s3_client()
+
+    # Download if not in local /tmp cache
+    if not os.path.exists(local_index_path):
+        logger.info(f"Downloading FAISS index for {document_id} from MinIO...")
+        client.fget_object(bucket, f"indexes/{document_id}.faiss", local_index_path)
         
-    logger.info(f"Loading FAISS index for document {document_id} from disk...")
-    index = faiss.read_index(index_path)
-    
-    with open(meta_path, "r", encoding="utf-8") as f:
+    if not os.path.exists(local_meta_path):
+        client.fget_object(bucket, f"indexes/{document_id}_meta.json", local_meta_path)
+        
+    index = faiss.read_index(local_index_path)
+    with open(local_meta_path, "r", encoding="utf-8") as f:
         metadata = json.load(f)
         
     return index, metadata

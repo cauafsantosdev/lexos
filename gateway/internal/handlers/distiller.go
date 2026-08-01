@@ -4,11 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"lexos-gateway/internal/queue"
-	"lexos-gateway/internal/utils"
+	"lexos-gateway/internal/storage"
 
 	"github.com/labstack/echo/v4"
 )
@@ -19,14 +20,21 @@ type SummarizeRequest struct {
 	Style        string `json:"style"`
 }
 
-// HandleSummarizationRequest routes the request based on Content-Type
+// HandleSummarizationRequest routes the request based on Content-Type, streams files to MinIO, and queues the task
 func HandleSummarizationRequest(c echo.Context) error {
 	contentType := c.Request().Header.Get("Content-Type")
 	taskID := fmt.Sprintf("task_%d", time.Now().UnixNano())
-
+	
 	payload := map[string]string{
 		"task_id": taskID,
 		"type":    "summarization",
+	}
+
+	taskState := map[string]interface{}{
+		"task_id":    taskID,
+		"status":     "queued",
+		"type":       "summarization",
+		"created_at": time.Now().Format(time.RFC3339),
 	}
 
 	// Handle Direct Text Payload
@@ -35,43 +43,57 @@ func HandleSummarizationRequest(c echo.Context) error {
 		if err := c.Bind(&req); err != nil || req.DocumentText == "" {
 			return c.JSON(http.StatusBadRequest, map[string]string{"error": "Missing 'document_text' in JSON"})
 		}
-		payload["document_text"] = req.DocumentText
 		
-		// Map the style if the user provided one
+		payload["document_text"] = req.DocumentText
+		taskState["has_direct_text"] = true
+
 		if req.Style != "" {
 			payload["style"] = req.Style
 		}
 
 	// Handle File Upload (.txt, .pdf, or .docx)
 	} else if strings.HasPrefix(contentType, "multipart/form-data") {
-		file, err := c.FormFile("document")
+		fileHeader, err := c.FormFile("document")
 		if err != nil {
 			return c.JSON(http.StatusBadRequest, map[string]string{"error": "Missing 'document' file in form"})
 		}
 		
-		dstPath, err := utils.SaveUploadedFile(file, taskID)
+		file, err := fileHeader.Open()
 		if err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to save document to disk"})
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to open uploaded file"})
 		}
-		payload["file_path"] = dstPath
+		defer file.Close()
 
-		// Map the style from the form data if the user provided one
+		ext := filepath.Ext(fileHeader.Filename)
+		s3Key := fmt.Sprintf("documents/%s%s", taskID, ext)
+
+		// Stream directly to MinIO
+		_, err = storage.UploadStream(s3Key, file, fileHeader.Size, fileHeader.Header.Get("Content-Type"))
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to stream document to MinIO"})
+		}
+		
+		payload["s3_key"] = s3Key
+		taskState["s3_key"] = s3Key
+
 		style := c.FormValue("style")
 		if style != "" {
 			payload["style"] = style
 		}
-
-	// Reject anything else
 	} else {
 		return c.JSON(http.StatusUnsupportedMediaType, map[string]string{
 			"error": "Use application/json for text or multipart/form-data for files",
 		})
 	}
 
+	// Set initial task state in Redis Hash
+	taskHashKey := fmt.Sprintf("task:%s", taskID)
+	queue.Client.HSet(queue.Ctx, taskHashKey, taskState)
+
 	// Queue the task
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to encode task"})
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to encode task payload"})
 	}
 
 	err = queue.Client.RPush(queue.Ctx, "lexos:queue:summarization", payloadBytes).Err()
@@ -82,6 +104,6 @@ func HandleSummarizationRequest(c echo.Context) error {
 	return c.JSON(http.StatusAccepted, map[string]string{
 		"message": "Document queued for summarization",
 		"task_id": taskID,
-		"status":  "pending",
+		"status":  "queued",
 	})
 }

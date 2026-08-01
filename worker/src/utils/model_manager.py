@@ -1,4 +1,6 @@
-from fastembed import TextEmbedding, PoolingType, ModelSource
+import os
+from fastembed import TextEmbedding
+from fastembed.common.model_description import PoolingType, ModelSource
 from huggingface_hub import hf_hub_download
 from faster_whisper import WhisperModel
 from tokenizers import Tokenizer
@@ -62,7 +64,9 @@ def get_tokenizer() -> Tokenizer:
         logger.info("Fetching tokenizer.json via huggingface_hub...")
         tokenizer_path = hf_hub_download(
             repo_id="intfloat/multilingual-e5-small",
-            filename="onnx/tokenizer.json"
+            filename="onnx/tokenizer.json",
+            cache_dir="/models/tokenizer",
+            token=os.getenv("HF_TOKEN")
         )
         _TOKENIZER = Tokenizer.from_file(tokenizer_path)
         logger.info("Native Tokenizer loaded successfully.")
@@ -86,7 +90,8 @@ def get_llm() -> Llama:
         model_path = hf_hub_download(
             repo_id="bartowski/Qwen_Qwen3-0.6B-GGUF",
             filename="Qwen_Qwen3-0.6B-Q4_K_M.gguf",
-            cache_dir="/models"
+            cache_dir="/models/qwen3",
+            token=os.getenv("HF_TOKEN")
         )
         _LLM = Llama(
             model_path=model_path,

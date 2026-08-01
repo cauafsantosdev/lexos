@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"os"
 	"path/filepath"
 	"encoding/json"
 	"fmt"
@@ -9,42 +8,64 @@ import (
 	"time"
 
 	"lexos-gateway/internal/queue"
-	"lexos-gateway/internal/utils"
+	"lexos-gateway/internal/storage"
 
 	"github.com/labstack/echo/v4"
 )
 
 type TaskPayload struct {
 	TaskID   string `json:"task_id"`
-	FilePath string `json:"file_path"`
+	S3Key    string `json:"s3_key"`
 	Type     string `json:"type"`
 }
 
-// HandleTranscriptionRequest validates the upload, saves it, and queues the task
+// HandleTranscriptionRequest validates the upload, streams it to MinIO, and queues the task
 func HandleTranscriptionRequest(c echo.Context) error {
-	file, err := c.FormFile("audio")
+	// Parse the uploaded audio file from the form
+	fileHeader, err := c.FormFile("audio")
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Missing 'audio' file"})
 	}
 
-	taskID := fmt.Sprintf("task_%d", time.Now().UnixNano())
-
-	// Call file saver util
-	dstPath, err := utils.SaveUploadedFile(file, taskID)
+	// Open the uploaded file for streaming
+	file, err := fileHeader.Open()
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to save file on disk"})
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to open uploaded file"})
 	}
+	defer file.Close()
+
+	// Generate a unique task ID and S3 key for the uploaded audio
+	taskID := fmt.Sprintf("task_%d", time.Now().UnixNano())
+	ext := filepath.Ext(fileHeader.Filename)
+	s3Key := fmt.Sprintf("audio/%s%s", taskID, ext)
+
+	// Stream the file directly to MinIO without saving it to local disk
+	_, err = storage.UploadStream(s3Key, file, fileHeader.Size, fileHeader.Header.Get("Content-Type"))
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to stream audio to MinIO"})
+	}
+
+	// Set initial task state in Redis Hash
+	taskHashKey := fmt.Sprintf("task:%s", taskID)
+	taskState := map[string]interface{}{
+		"task_id":    taskID,
+		"status":     "queued",
+		"type":       "transcription",
+		"s3_key":     s3Key,
+		"created_at": time.Now().Format(time.RFC3339),
+	}
+	queue.Client.HSet(queue.Ctx, taskHashKey, taskState)
 
 	// Create and encode the payload
 	payload := TaskPayload{
-		TaskID:   taskID,
-		FilePath: dstPath,
-		Type:     "transcription",
+		TaskID: taskID,
+		S3Key:  s3Key,
+		Type:   "transcription",
 	}
-
+	
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to encode task"})
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to encode task payload"})
 	}
 
 	// Enqueue the task
@@ -54,27 +75,8 @@ func HandleTranscriptionRequest(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusAccepted, map[string]string{
-		"message": "File received and queued for processing",
+		"message": "Audio received, uploaded to MinIO, and queued for processing",
 		"task_id": taskID,
-		"status":  "pending",
+		"status":  "queued",
 	})
-}
-
-// GetTranscriptionResult fetches the processed JSON file based on the task ID.
-func GetTranscriptionResult(c echo.Context) error {
-	taskID := c.Param("id")
-	
-	// Construct the path to where Python saves the result
-	resultPath := filepath.Join("/uploads", taskID+".json")
-
-	// Check if the file exists on the disk
-	if _, err := os.Stat(resultPath); os.IsNotExist(err) {
-		return c.JSON(http.StatusNotFound, map[string]string{
-			"error":  "Result not found.",
-			"detail": "The task is either still processing, or the ID is invalid.",
-			"status": "pending_or_missing",
-		})
-	}
-
-	return c.File(resultPath)
 }

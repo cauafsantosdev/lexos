@@ -1,10 +1,10 @@
 import os
-import json
-import numpy as np
 import faiss
+import numpy as np
 from utils.logger import get_logger
 from utils.file_parser import extract_text
 from utils.model_manager import get_embedding_model, get_tokenizer
+from utils.s3 import upload_file_to_s3, upload_json_to_s3
 
 
 logger = get_logger("gleaner_indexer")
@@ -111,15 +111,11 @@ def process_indexing_task(task_data: dict) -> dict:
     index = faiss.IndexFlatIP(dimension)
     index.add(embeddings)
 
-    # Ensure uploads directory exists
-    os.makedirs("/uploads", exist_ok=True)
-
     # Persist FAISS vector index
-    index_path = os.path.join("/uploads", f"{task_id}.faiss")
+    index_path = f"/tmp/{task_id}.faiss"
     faiss.write_index(index, index_path)
 
     # Persist rich metadata registry with model verification data
-    meta_path = os.path.join("/uploads", f"{task_id}_meta.json")
     metadata = {
         "task_id": task_id,
         "embedding_model": "intfloat/multilingual-e5-small",
@@ -129,14 +125,16 @@ def process_indexing_task(task_data: dict) -> dict:
         "chunks": chunks
     }
     
-    with open(meta_path, "w", encoding="utf-8") as f:
-        json.dump(metadata, f, ensure_ascii=False, indent=2)
+    upload_file_to_s3(f"indexes/{task_id}.faiss", index_path)
+    upload_json_to_s3(f"indexes/{task_id}_meta.json", metadata)
+    
+    # Cleanup local tmp
+    os.remove(index_path)
 
-    logger.info(f"Indexing complete! Saved to {index_path} and {meta_path}")
+    logger.info(f"Indexing complete! Saved to MinIO under indexes/{task_id}")
 
     return {
         "status": "indexed",
         "task_id": task_id,
-        "chunks_indexed": len(chunks),
-        "index_path": index_path
+        "chunks_indexed": len(chunks)
     }

@@ -5,15 +5,21 @@ import (
 
 	"lexos-gateway/internal/queue"
 	"lexos-gateway/internal/routes"
+	"lexos-gateway/internal/storage"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 )
 
 func main() {
-	// Initialize dependencies
+	// Initialize Redis queue
 	if err := queue.Init(); err != nil {
 		log.Fatalf("Fatal: Could not connect to Redis: %v", err)
+	}
+
+	// Initialize MinIO storage
+	if err := storage.InitMinIO(); err != nil {
+		log.Fatalf("Fatal: Could not connect to MinIO: %v", err)
 	}
 
 	// Setup Echo

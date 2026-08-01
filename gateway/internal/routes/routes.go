@@ -23,5 +23,5 @@ func Register(e *echo.Echo) {
 	e.GET("/glean/ask", handlers.StreamQA)
 
 	// Task Retrieval Endpoint
-	e.GET("/task/:id", handlers.GetTranscriptionResult)
+	e.GET("/task/:id", handlers.GetTaskState)
 }

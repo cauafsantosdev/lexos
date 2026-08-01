@@ -5,51 +5,63 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+	"path/filepath"
 
 	"lexos-gateway/internal/queue"
-	"lexos-gateway/internal/utils"
+	"lexos-gateway/internal/storage"
 
 	"github.com/labstack/echo/v4"
 )
 
-// IndexDocument handles uploading a file, saving it, and queuing the indexing task
+// IndexDocument handles uploading a file, streaming it to MinIO, and queuing the indexing task
 func IndexDocument(c echo.Context) error {
-	file, err := c.FormFile("document")
+	// Parse the uploaded file from the form
+	fileHeader, err := c.FormFile("document")
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Missing 'document' file"})
 	}
 
-	// Using the same timestamp-based ID strategy as Scriber/Distiller
+	// Open the uploaded file for streaming
+	file, err := fileHeader.Open()
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to open uploaded file"})
+	}
+	defer file.Close()
+
+	// Generate a unique task ID and S3 key for the uploaded document
 	taskID := fmt.Sprintf("task_%d", time.Now().UnixNano())
+	ext := filepath.Ext(fileHeader.Filename)
+	s3Key := fmt.Sprintf("documents/%s%s", taskID, ext)
 
-	// Reusing your existing utility to save to the /uploads volume
-	dstPath, err := utils.SaveUploadedFile(file, taskID)
+	// Stream the file directly to MinIO without saving it to local disk
+	_, err = storage.UploadStream(s3Key, file, fileHeader.Size, fileHeader.Header.Get("Content-Type"))
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to save document to disk"})
-	}
-
-	// Create and encode the payload
-	payload := map[string]string{
-		"task_id":   taskID,
-		"file_path": dstPath,
-		"type":      "indexing",
-	}
-	
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to encode task"})
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to stream document to MinIO"})
 	}
 
-	// Enqueue the task using your existing Redis client
-	err = queue.Client.RPush(queue.Ctx, "lexos:queue:gleaner:index", payloadBytes).Err()
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to push task to queue"})
+	// Set initial task state in a Redis Hash
+	taskHashKey := fmt.Sprintf("task:%s", taskID)
+	taskState := map[string]interface{}{
+		"task_id":    taskID,
+		"status":     "queued",
+		"type":       "indexing",
+		"s3_key":     s3Key,
+		"created_at": time.Now().Format(time.RFC3339),
 	}
+	queue.Client.HSet(queue.Ctx, taskHashKey, taskState)
+
+	// Push task to queue
+	payload, _ := json.Marshal(map[string]string{
+		"task_id": taskID,
+		"s3_key":  s3Key,
+		"type":    "indexing",
+	})
+	queue.Client.RPush(queue.Ctx, "lexos:queue:gleaner:index", payload)
 
 	return c.JSON(http.StatusAccepted, map[string]string{
-		"message":     "Document queued for indexing",
+		"message":     "Document uploaded to MinIO and queued for indexing",
 		"document_id": taskID,
-		"status":      "pending",
+		"status":      "queued",
 	})
 }
 
@@ -73,6 +85,17 @@ func StreamQA(c echo.Context) error {
 		"type":        "qa_stream",
 	}
 	payload, _ := json.Marshal(taskData)
+
+	// Set initial task state in Redis Hash for architectural consistency
+	taskHashKey := fmt.Sprintf("task:%s", taskID)
+	taskState := map[string]interface{}{
+		"task_id":     taskID,
+		"status":      "queued",
+		"type":        "qa_stream",
+		"document_id": documentID,
+		"created_at":  time.Now().Format(time.RFC3339),
+	}
+	queue.Client.HSet(queue.Ctx, taskHashKey, taskState)
 
 	if err := queue.Client.RPush(queue.Ctx, "lexos:queue:gleaner:ask", payload).Err(); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to queue QA task"})

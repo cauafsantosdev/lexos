@@ -1,10 +1,12 @@
 import os
 import json
 import redis
+from datetime import datetime, timezone
 from services.scriber_service import transcribe_audio
 from services.distiller_service import process_summarization_task
 from services.gleaner_indexer_service import process_indexing_task
 from services.gleaner_qa_service import process_qa_task
+from utils.s3 import download_s3_file_to_temp, upload_json_to_s3
 from utils.logger import get_logger
 
 
@@ -15,8 +17,8 @@ def start_worker():
     """
     Initializes the Redis connection and starts an infinite blocking loop to listen for incoming AI tasks on specified queues.
 
-    The worker handles task routing, executes the corresponding AI service, saves the result to a JSON file, 
-    and automatically cleans up the original uploaded file to prevent storage bloat.
+    The worker handles task routing, executes the corresponding AI service, and manages state updates in Redis. 
+    It also handles temporary file cleanup and error logging.
 
     Queues monitored:
         - 'lexos:queue:transcription': Tasks for Faster-Whisper audio processing.
@@ -57,7 +59,7 @@ def start_worker():
 
     # Enter a continuous polling loop to process incoming background tasks
     while True:
-        file_path = None
+        temp_local_file = None
         try:
             # Block indefinitely until a message arrives in any of the target queues
             popped = r.blpop(queues, timeout=5)
@@ -69,43 +71,64 @@ def start_worker():
             queue_name, message = popped
             
             # Decode the incoming JSON payload to extract task metadata
+            queue_name, message = popped
             task_data = json.loads(message)
             task_id = task_data.get("task_id")
+            s3_key = task_data.get("s3_key")
             
+            task_hash = f"task:{task_id}"
             logger.info(f"Received Task: {task_id} from {queue_name}")
+
+            # Update State -> Processing
+            r.hset(task_hash, mapping={
+                "status": "processing",
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            })
+
+            # Download source file from MinIO if required
+            if s3_key:
+                temp_local_file = download_s3_file_to_temp(s3_key)
+                task_data["file_path"] = temp_local_file
+
             result = {}
 
             # Route the payload to the appropriate AI service based on the source queue
             if queue_name == "lexos:queue:transcription": # Scriber
-                file_path = task_data.get("file_path")
-                result = transcribe_audio(file_path)
+                result = transcribe_audio(temp_local_file)
                 
             elif queue_name == "lexos:queue:summarization": # Distiller
-                file_path = task_data.get("file_path")
                 result = process_summarization_task(task_data)
 
             elif queue_name == "lexos:queue:gleaner:index": # Gleaner Indexer
-                file_path = task_data.get("file_path")
                 result = process_indexing_task(task_data)
 
             elif queue_name == "lexos:queue:gleaner:ask": # Gleaner QA
                 result = process_qa_task(task_data)            
 
-            # Serialize the processing result and write it to the shared volume for the gateway to retrieve
-            result_path = os.path.join("/uploads", f"{task_id}.json")
-            with open(result_path, "w", encoding="utf-8") as f:
-                json.dump(result, f, indent=4, ensure_ascii=False)
+            # Upload JSON result to MinIO (Skip for streaming QA)
+            if queue_name != "lexos:queue:gleaner:ask":
+                result_s3_key = f"results/{task_id}.json"
+                result_url = upload_json_to_s3(result_s3_key, result)
 
-            logger.info(f"Task {task_id} complete. Result saved to {result_path}")
+                # Update State -> Completed
+                r.hset(task_hash, mapping={
+                    "status": "completed",
+                    "result_s3_key": result_s3_key,
+                    "result_url": result_url,
+                    "updated_at": datetime.now(timezone.utc).isoformat()
+                })
+                logger.info(f"Task {task_id} completed successfully. Result stored at {result_url}")
 
         except Exception as e:
             # Catch and log any exceptions to ensure the worker loop remains active for subsequent tasks
             logger.error(f"Error processing task: {str(e)}", exc_info=True)
+            if 'task_hash' in locals():
+                r.hset(task_hash, mapping={
+                    "status": "failed",
+                    "error": str(e),
+                    "updated_at": datetime.now(timezone.utc).isoformat()
+                })
         finally:
             # Guarantee cleanup of the temporary uploaded file to prevent disk space exhaustion
-            if file_path and os.path.exists(file_path):
-                try:
-                    os.remove(file_path)
-                    logger.debug(f"Cleaned up raw file: {file_path}")
-                except Exception as cleanup_error:
-                    logger.warning(f"Failed to delete file {file_path}: {cleanup_error}")
+            if temp_local_file and os.path.exists(temp_local_file):
+                os.remove(temp_local_file)

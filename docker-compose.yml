@@ -7,11 +7,16 @@ services:
       - "8000:8000"
     volumes:
       - ./gateway:/app
-      - ./uploads:/uploads
     depends_on:
       - redis
+      - lexos-minio
     environment:
-      - REDIS_URL=redis:6379
+      - REDIS_URL=${REDIS_URL}
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT}
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD}
+      - MINIO_BUCKET=${MINIO_BUCKET}
+      - MINIO_USE_SSL=${MINIO_USE_SSL}
 
   lexos-worker:
     build: 
@@ -19,21 +24,43 @@ services:
       dockerfile: Dockerfile
     volumes:
       - ./worker:/app
-      - ./uploads:/uploads
       - ./models:/models
     depends_on:
       - redis
+      - lexos-minio
     deploy:
       resources:
         limits:
           cpus: '2.0'
           memory: 2G
     environment:
-      - REDIS_URL=redis:6379
+      - REDIS_URL=${REDIS_URL}
       - OMP_NUM_THREADS=2
       - HF_HOME=/models
+      - HF_TOKEN=${HF_TOKEN}
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT}
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD}
+      - MINIO_BUCKET=${MINIO_BUCKET}
+      - MINIO_USE_SSL=${MINIO_USE_SSL}
+
+  lexos-minio:
+    image: minio/minio:latest
+    container_name: lexos-minio
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000" # S3 API Port
+      - "9001:9001" # Web Console Port
+    volumes:
+      - minio_data:/data
 
   redis:
     image: "redis:8.8.0-alpine"
     ports:
       - "6379:6379"
+
+volumes:
+  minio_data:
