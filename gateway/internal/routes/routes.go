@@ -52,6 +52,9 @@ func Register(e *echo.Echo) {
 	// Gleaner Service QA Endpoint
 	e.GET("/glean/ask", handlers.StreamQA)
 
-	// Task Retrieval Endpoint
+	// Task State Endpoint
 	e.GET("/task/:id", handlers.GetTaskState)
+
+	// Task Result Retrieval Endpoint
+	e.GET("/task/:id/result", handlers.GetTaskResult)
 }

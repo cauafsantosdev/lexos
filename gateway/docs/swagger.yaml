@@ -176,6 +176,31 @@ paths:
       summary: Get the status of an async task
       tags:
       - Core
+  /task/{id}/result:
+    get:
+      description: Securely proxies the resulting JSON artifact from private MinIO
+        storage.
+      parameters:
+      - description: Task ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The raw JSON result
+          schema: {}
+        "404":
+          description: Result not found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Download task result
+      tags:
+      - Core
   /transcribe:
     post:
       consumes:
