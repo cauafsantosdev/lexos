@@ -62,5 +62,20 @@ services:
     ports:
       - "6379:6379"
 
+  lexos-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+      - NEXT_PUBLIC_GITHUB_URL=${NEXT_PUBLIC_GITHUB_URL}
+    depends_on:
+      - lexos-gateway
+
 volumes:
   minio_data:

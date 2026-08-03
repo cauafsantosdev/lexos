@@ -1,0 +1,140 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+  --font-ui: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: #18181b;
+  scroll-behavior: smooth;
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    #18181b;
+  background-size: 32px 32px;
+  color: #fff;
+  font-family: var(--font-ui);
+}
+
+::selection {
+  background: #4ade80;
+  color: #09090b;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+.font-mono {
+  font-family: var(--font-mono);
+}
+
+.markdown-output {
+  color: #f4f4f5;
+  line-height: 1.75;
+}
+
+.markdown-output > * + * {
+  margin-top: 1rem;
+}
+
+.markdown-output h1,
+.markdown-output h2,
+.markdown-output h3 {
+  color: #fff;
+  font-weight: 900;
+  letter-spacing: -0.03em;
+  text-transform: uppercase;
+}
+
+.markdown-output h1 {
+  font-size: 1.75rem;
+}
+
+.markdown-output h2 {
+  font-size: 1.4rem;
+}
+
+.markdown-output h3 {
+  font-size: 1.15rem;
+}
+
+.markdown-output ul,
+.markdown-output ol {
+  margin-left: 1.5rem;
+}
+
+.markdown-output ul {
+  list-style: square;
+}
+
+.markdown-output ol {
+  list-style: decimal;
+}
+
+.markdown-output li + li {
+  margin-top: 0.5rem;
+}
+
+.markdown-output strong {
+  color: #4ade80;
+}
+
+.markdown-output a {
+  color: #c084fc;
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+}
+
+.markdown-output blockquote {
+  border-left: 4px solid #a855f7;
+  background: #18181b;
+  padding: 0.75rem 1rem;
+  color: #d4d4d8;
+}
+
+.markdown-output code {
+  border: 2px solid #52525b;
+  background: #09090b;
+  padding: 0.1rem 0.35rem;
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+.markdown-output pre {
+  overflow-x: auto;
+  border: 3px solid #fff;
+  background: #09090b;
+  padding: 1rem;
+  box-shadow: 4px 4px 0 0 #a855f7;
+}
+
+.markdown-output pre code {
+  border: 0;
+  padding: 0;
+}
+
+@keyframes progress {
+  0% {
+    transform: translateX(-110%);
+  }
+
+  100% {
+    transform: translateX(410%);
+  }
+}

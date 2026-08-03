@@ -1,0 +1,37 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  viewBox="0 0 64 64"
+  role="img"
+  aria-label="Lexos"
+>
+  <rect width="64" height="64" fill="#18181B" />
+
+  <rect
+    x="5"
+    y="5"
+    width="46"
+    height="46"
+    fill="#A855F7"
+    stroke="#FFFFFF"
+    stroke-width="4"
+  />
+
+  <path
+    d="M19 16V40H39"
+    fill="none"
+    stroke="#09090B"
+    stroke-width="8"
+    stroke-linecap="square"
+    stroke-linejoin="miter"
+  />
+
+  <rect
+    x="43"
+    y="43"
+    width="16"
+    height="16"
+    fill="#4ADE80"
+    stroke="#FFFFFF"
+    stroke-width="4"
+  />
+</svg>
