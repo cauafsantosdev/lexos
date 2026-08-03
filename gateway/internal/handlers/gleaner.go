@@ -1,14 +1,12 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
 	"path/filepath"
-
-	"lexos-gateway/internal/queue"
-	"lexos-gateway/internal/storage"
 
 	"github.com/labstack/echo/v4"
 )
@@ -24,7 +22,7 @@ import (
 // @Failure 400 {object} map[string]string "Missing document file"
 // @Failure 500 {object} map[string]string "Internal server error"
 // @Router /glean/index [post]
-func IndexDocument(c echo.Context) error {
+func (api *API) IndexDocument(c echo.Context) error {
 	// Parse the uploaded file from the form
 	fileHeader, err := c.FormFile("document")
 	if err != nil {
@@ -44,7 +42,7 @@ func IndexDocument(c echo.Context) error {
 	s3Key := fmt.Sprintf("documents/%s%s", taskID, ext)
 
 	// Stream the file directly to MinIO without saving it to local disk
-	_, err = storage.UploadStream(s3Key, file, fileHeader.Size, fileHeader.Header.Get("Content-Type"))
+	_, err = api.Storage.UploadStream(s3Key, file, fileHeader.Size, fileHeader.Header.Get("Content-Type"))
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to stream document to MinIO"})
 	}
@@ -58,7 +56,7 @@ func IndexDocument(c echo.Context) error {
 		"s3_key":     s3Key,
 		"created_at": time.Now().Format(time.RFC3339),
 	}
-	queue.Client.HSet(queue.Ctx, taskHashKey, taskState)
+	api.Queue.HSet(context.Background(), taskHashKey, taskState)
 
 	// Push task to queue
 	payload, _ := json.Marshal(map[string]string{
@@ -66,7 +64,7 @@ func IndexDocument(c echo.Context) error {
 		"s3_key":  s3Key,
 		"type":    "indexing",
 	})
-	queue.Client.RPush(queue.Ctx, "lexos:queue:gleaner:index", payload)
+	api.Queue.RPush(context.Background(), "lexos:queue:gleaner:index", payload)
 
 	return c.JSON(http.StatusAccepted, map[string]string{
 		"message":     "Document uploaded to MinIO and queued for indexing",
@@ -86,7 +84,7 @@ func IndexDocument(c echo.Context) error {
 // @Failure 400 {object} map[string]string "Missing parameters"
 // @Failure 500 {object} map[string]string "Internal server error"
 // @Router /glean/ask [get]
-func StreamQA(c echo.Context) error {
+func (api *API) StreamQA(c echo.Context) error {
 	documentID := c.QueryParam("document_id")
 	query := c.QueryParam("query")
 
@@ -115,9 +113,9 @@ func StreamQA(c echo.Context) error {
 		"document_id": documentID,
 		"created_at":  time.Now().Format(time.RFC3339),
 	}
-	queue.Client.HSet(queue.Ctx, taskHashKey, taskState)
+	api.Queue.HSet(context.Background(), taskHashKey, taskState)
 
-	if err := queue.Client.RPush(queue.Ctx, "lexos:queue:gleaner:ask", payload).Err(); err != nil {
+	if err := api.Queue.RPush(context.Background(), "lexos:queue:gleaner:ask", payload).Err(); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to queue QA task"})
 	}
 
@@ -131,7 +129,7 @@ func StreamQA(c echo.Context) error {
 	c.Response().WriteHeader(http.StatusOK)
 
 	// Subscribe to Redis Pub/Sub
-	pubsub := queue.Client.Subscribe(queue.Ctx, streamChannel)
+	pubsub := api.Queue.Subscribe(context.Background(), streamChannel)
 	defer pubsub.Close()
 	
 	ch := pubsub.Channel()

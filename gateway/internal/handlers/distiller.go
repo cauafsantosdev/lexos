@@ -1,15 +1,13 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"path/filepath"
 	"strings"
 	"time"
-
-	"lexos-gateway/internal/queue"
-	"lexos-gateway/internal/storage"
 
 	"github.com/labstack/echo/v4"
 )
@@ -34,7 +32,7 @@ type SummarizeRequest struct {
 // @Failure 400 {object} map[string]string "Invalid request"
 // @Failure 500 {object} map[string]string "Internal server error"
 // @Router /summarize [post]
-func HandleSummarizationRequest(c echo.Context) error {
+func (api *API) HandleSummarizationRequest(c echo.Context) error {
 	contentType := c.Request().Header.Get("Content-Type")
 	taskID := fmt.Sprintf("task_%d", time.Now().UnixNano())
 	
@@ -81,7 +79,7 @@ func HandleSummarizationRequest(c echo.Context) error {
 		s3Key := fmt.Sprintf("documents/%s%s", taskID, ext)
 
 		// Stream directly to MinIO
-		_, err = storage.UploadStream(s3Key, file, fileHeader.Size, fileHeader.Header.Get("Content-Type"))
+		_, err = api.Storage.UploadStream(s3Key, file, fileHeader.Size, fileHeader.Header.Get("Content-Type"))
 		if err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to stream document to MinIO"})
 		}
@@ -101,7 +99,7 @@ func HandleSummarizationRequest(c echo.Context) error {
 
 	// Set initial task state in Redis Hash
 	taskHashKey := fmt.Sprintf("task:%s", taskID)
-	queue.Client.HSet(queue.Ctx, taskHashKey, taskState)
+	api.Queue.HSet(context.Background(), taskHashKey, taskState)
 
 	// Queue the task
 	payloadBytes, err := json.Marshal(payload)
@@ -109,7 +107,7 @@ func HandleSummarizationRequest(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to encode task payload"})
 	}
 
-	err = queue.Client.RPush(queue.Ctx, "lexos:queue:summarization", payloadBytes).Err()
+	err = api.Queue.RPush(context.Background(), "lexos:queue:summarization", payloadBytes).Err()
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to queue task"})
 	}

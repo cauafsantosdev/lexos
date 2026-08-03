@@ -51,13 +51,33 @@ func InitMinIO() error {
 	return nil
 }
 
+// MinioWrapper is a wrapper around the MinIO client to implement the StorageService interface.
+type MinioWrapper struct {
+	Client *minio.Client
+}
+
 // UploadStream streams an incoming file directly to MinIO without saving to local disk.
-func UploadStream(objectKey string, reader io.Reader, size int64, contentType string) (string, error) {
-	info, err := MinioClient.PutObject(Ctx, BucketName, objectKey, reader, size, minio.PutObjectOptions{
+func (m *MinioWrapper) UploadStream(key string, reader io.Reader, size int64, contentType string) (string, error) {
+	info, err := m.Client.PutObject(context.Background(), BucketName, key, reader, size, minio.PutObjectOptions{
 		ContentType: contentType,
 	})
 	if err != nil {
 		return "", err
 	}
 	return info.Key, nil
+}
+
+// StatObject checks if an object exists in MinIO.
+func (m *MinioWrapper) StatObject(ctx context.Context, bucket string, key string) (bool, error) {
+	_, err := m.Client.StatObject(ctx, bucket, key, minio.StatObjectOptions{})
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// GetObject retrieves an object from MinIO.
+func (m *MinioWrapper) GetObject(ctx context.Context, bucket string, key string) (io.ReadCloser, error) {
+	object, err := m.Client.GetObject(ctx, bucket, key, minio.GetObjectOptions{})
+	return object, err
 }

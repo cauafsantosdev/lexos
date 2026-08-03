@@ -1,14 +1,12 @@
 package handlers
 
 import (
+	"context"
 	"path/filepath"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
-
-	"lexos-gateway/internal/queue"
-	"lexos-gateway/internal/storage"
 
 	"github.com/labstack/echo/v4"
 )
@@ -30,7 +28,7 @@ type TaskPayload struct {
 // @Failure 400 {object} map[string]string "Missing audio file"
 // @Failure 500 {object} map[string]string "Internal server error"
 // @Router /transcribe [post]
-func HandleTranscriptionRequest(c echo.Context) error {
+func (api *API) HandleTranscriptionRequest(c echo.Context) error {
 	// Parse the uploaded audio file from the form
 	fileHeader, err := c.FormFile("audio")
 	if err != nil {
@@ -50,7 +48,7 @@ func HandleTranscriptionRequest(c echo.Context) error {
 	s3Key := fmt.Sprintf("audio/%s%s", taskID, ext)
 
 	// Stream the file directly to MinIO without saving it to local disk
-	_, err = storage.UploadStream(s3Key, file, fileHeader.Size, fileHeader.Header.Get("Content-Type"))
+	_, err = api.Storage.UploadStream(s3Key, file, fileHeader.Size, fileHeader.Header.Get("Content-Type"))
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to stream audio to MinIO"})
 	}
@@ -64,7 +62,7 @@ func HandleTranscriptionRequest(c echo.Context) error {
 		"s3_key":     s3Key,
 		"created_at": time.Now().Format(time.RFC3339),
 	}
-	queue.Client.HSet(queue.Ctx, taskHashKey, taskState)
+	api.Queue.HSet(context.Background(), taskHashKey, taskState)
 
 	// Create and encode the payload
 	payload := TaskPayload{
@@ -79,7 +77,7 @@ func HandleTranscriptionRequest(c echo.Context) error {
 	}
 
 	// Enqueue the task
-	err = queue.Client.RPush(queue.Ctx, "lexos:queue:transcription", payloadBytes).Err()
+	err = api.Queue.RPush(context.Background(), "lexos:queue:transcription", payloadBytes).Err()
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to push task to queue"})
 	}

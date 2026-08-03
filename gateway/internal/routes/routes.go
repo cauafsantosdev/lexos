@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"lexos-gateway/internal/handlers"
+	"lexos-gateway/internal/queue"
+	"lexos-gateway/internal/storage"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -35,26 +37,31 @@ func Register(e *echo.Echo) {
 		},
 	})
 
+	storageService := &storage.MinioWrapper{
+		Client: storage.MinioClient,
+	}
+	api := handlers.NewAPI(queue.Client, storageService)
+
 	e.GET("/health", handlers.HealthCheck)
 
 	// Swagger UI Route
 	e.GET("/swagger/*", echoSwagger.WrapHandler)
 	
 	// Scriber Service Endpoint
-	e.POST("/transcribe", handlers.HandleTranscriptionRequest, aiLimiter)
+	e.POST("/transcribe", api.HandleTranscriptionRequest, aiLimiter)
 
 	// Distiller Service Endpoint
-	e.POST("/summarize", handlers.HandleSummarizationRequest, aiLimiter)
+	e.POST("/summarize", api.HandleSummarizationRequest, aiLimiter)
 	
 	// Gleaner Service Indexing Endpoint
-	e.POST("/glean/index", handlers.IndexDocument, aiLimiter)
+	e.POST("/glean/index", api.IndexDocument, aiLimiter)
 
 	// Gleaner Service QA Endpoint
-	e.GET("/glean/ask", handlers.StreamQA)
+	e.GET("/glean/ask", api.StreamQA)
 
 	// Task State Endpoint
-	e.GET("/task/:id", handlers.GetTaskState)
+	e.GET("/task/:id", api.GetTaskState)
 
 	// Task Result Retrieval Endpoint
-	e.GET("/task/:id/result", handlers.GetTaskResult)
+	e.GET("/task/:id/result", api.GetTaskResult)
 }
