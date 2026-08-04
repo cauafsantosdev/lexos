@@ -16,7 +16,7 @@
 
 ## Demo
 
-![Lexos Demo](https://i.imgur.com/KkiJhCO.gif)
+[Demo Video](https://github.com/user-attachments/assets/23674ff6-70c6-4da1-9821-1eba5aef3f60)
 
 ---
 
@@ -35,58 +35,7 @@
 
 Lexos uses a decoupled, event-driven architecture that separates the user interface, high-concurrency API gateway, infrastructure services, and CPU-bound machine learning workloads. This allows each layer to evolve and scale independently without coupling HTTP request handling to model inference.
 
-```mermaid
-flowchart LR
-    User["User"]
-
-    subgraph FrontendLayer["Frontend"]
-        direction TB
-        UI["Next.js 16 Web App"]
-    end
-
-    subgraph GatewayLayer["API Layer"]
-        direction TB
-        Go["Go + Echo Gateway"]
-    end
-
-    subgraph Infrastructure["Infrastructure Services"]
-        direction TB
-
-        Redis["Redis<br/>Queues · Task State · Pub/Sub"]
-        MinIO["MinIO<br/>S3-Compatible Object Storage"]
-
-        Redis ~~~ MinIO
-    end
-
-    subgraph WorkerLayer["AI Worker"]
-        direction TB
-
-        Consumer["Python Task Consumer"]
-
-        Scriber["Scriber<br/>Faster-Whisper"]
-        Distiller["Distiller<br/>Qwen3"]
-        Gleaner["Gleaner<br/>FastEmbed · FAISS · Qwen3"]
-
-        Consumer --> Scriber
-        Consumer --> Distiller
-        Consumer --> Gleaner
-
-        Scriber ~~~ Distiller
-        Distiller ~~~ Gleaner
-    end
-
-    User --> UI
-    UI -->|"HTTP requests"| Go
-    Go -->|"Create state and enqueue tasks"| Redis
-    Redis -->|"BLPOP queues"| Consumer
-
-    Go -->|"Upload artifacts"| MinIO
-    Consumer -->|"Read inputs and store outputs"| MinIO
-    Consumer -->|"Update state and publish tokens"| Redis
-
-    Redis -.->|"Task status and SSE events"| Go
-    Go -.->|"JSON responses and SSE"| UI
-```
+![Lexos System Architecture](docs/architecture.svg)
 
 ### 1. Frontend (Next.js)
 
@@ -151,7 +100,7 @@ Lexos was designed to run on a small, CPU-only VPS while sharing resources with 
 
 ```text
 lexos/
-├── lexos-gateway/        # Go API Gateway
+├── gateway/              # Go API Gateway
 │   ├── cmd/server/       # Main entry point
 │   └── internal/
 │       ├── handlers/     # HTTP route controllers and Dependency Injection
@@ -170,6 +119,7 @@ lexos/
 │   ├── app/              # App Router pages
 │   ├── components/       # Neo-brutalist UI components
 │   └── lib/              # Typed Go API client
+├── docs/                 # Helper documentation files
 ├── docker-compose.yml    # Full infrastructure orchestration
 └── .github/workflows/    # CI pipelines for Go and Python tests
 ```
