@@ -1,0 +1,52 @@
+name: Lexos CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  test-gateway:
+    name: Go Gateway Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./gateway 
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.4'
+          
+      - name: Install Dependencies
+        run: go mod tidy
+        
+      - name: Run Tests
+        run: go test -v ./...
+
+  test-worker:
+    name: Python Worker Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./worker 
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14.5'
+          cache: 'pip'
+          
+      - name: Install Dependencies
+        run: |
+          pip install -r requirements.txt
+          
+      - name: Run Tests
+        run: pytest -v
