@@ -40,11 +40,18 @@ def _chunk_text(text: str, chunk_size: int = 6500, overlap: int = 500) -> list[s
     Returns:
         list[str]: A list of text chunks.
     """
+    if not text:
+        return []
+        
     chunks = []
     start = 0
     while start < len(text):
         end = start + chunk_size
         chunks.append(text[start:end])
+
+        if end >= len(text):
+            break
+            
         start += chunk_size - overlap
     return chunks
 
@@ -142,10 +149,13 @@ def process_summarization_task(task_data: dict) -> dict:
 
     # Post-Processing for short_paragraph style
     if style == "short_paragraph":
+        # Remove markdown bullets at the start of each line
+        lines = final_summary.splitlines()
+        cleaned_lines = [re.sub(r'^\s*[-*]\s*', '', line) for line in lines]
+        
         # Replace newlines with spaces
-        final_summary = " ".join(final_summary.splitlines())
-        # Remove any residual markdown list tokens or inline labels if present
-        final_summary = re.sub(r'^\s*[-*•]\s*', '', final_summary)
+        final_summary = " ".join(cleaned_lines)
+        
         # Clean up multiple spaces
         final_summary = re.sub(r'\s+', ' ', final_summary).strip()
 
