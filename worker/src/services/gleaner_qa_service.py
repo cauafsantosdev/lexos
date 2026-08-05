@@ -1,5 +1,5 @@
-import os
 import json
+import os
 import redis
 import numpy as np
 import faiss
@@ -12,57 +12,55 @@ from utils.s3 import get_s3_client
 logger = get_logger("gleaner_qa")
 
 @lru_cache(maxsize=20)
-def _get_index_and_meta(document_id: str) -> tuple:
+def _get_index_and_meta(artifact_id: str, index_s3_key: str, meta_s3_key: str) -> tuple:
     """
-    Retrieves the FAISS vector index and rich metadata registry from disk.
+    Retrieves a content-addressed FAISS index and metadata registry.
 
-    Utilizes an LRU in-memory cache to eliminate disk I/O latency for frequently 
-    queried documents. Safely caps memory usage to the 20 most recent documents.
+    An LRU cache retains the most recently queried artifacts and avoids repeated
+    downloads for active documents while bounding process memory usage.
 
     Args:
-        document_id (str): The unique identifier for the processed document.
-
-    Raises:
-        FileNotFoundError: If the index or metadata file does not exist.
+        artifact_id (str): Stable processing fingerprint for the indexed document.
+        index_s3_key (str): Object key for the FAISS index.
+        meta_s3_key (str): Object key for the chunk metadata registry.
 
     Returns:
-        tuple: A tuple containing the loaded (faiss.IndexFlatIP, dict metadata).
+        tuple: Loaded FAISS index and metadata dictionary.
     """
-    local_index_path = f"/tmp/{document_id}.faiss"
-    local_meta_path = f"/tmp/{document_id}_meta.json"
-    
+    local_index_path = f"/tmp/{artifact_id}.faiss"
+    local_meta_path = f"/tmp/{artifact_id}_meta.json"
     client, bucket = get_s3_client()
 
-    # Download if not in local /tmp cache
+    # Download content-addressed artifacts only when they are absent from the local LRU-backed cache.
     if not os.path.exists(local_index_path):
-        logger.info(f"Downloading FAISS index for {document_id} from MinIO...")
-        client.fget_object(bucket, f"indexes/{document_id}.faiss", local_index_path)
-        
+        logger.info(f"Downloading FAISS index for artifact {artifact_id}...")
+        client.fget_object(bucket, index_s3_key, local_index_path)
+
     if not os.path.exists(local_meta_path):
-        client.fget_object(bucket, f"indexes/{document_id}_meta.json", local_meta_path)
-        
+        client.fget_object(bucket, meta_s3_key, local_meta_path)
+
     index = faiss.read_index(local_index_path)
-    with open(local_meta_path, "r", encoding="utf-8") as f:
-        metadata = json.load(f)
-        
+    with open(local_meta_path, "r", encoding="utf-8") as handle:
+        metadata = json.load(handle)
+
     return index, metadata
+
 
 def _assemble_context(retrieved_items: list) -> str:
     """
-    Assembles retrieved semantic chunks into a continuous context block.
+    Assembles retrieved semantic chunks into citation-ready context blocks.
 
-    Sorts chunks chronologically and merges physically adjacent passages (within 
-    20 characters of each other) to restore the original narrative flow and 
-    conserve LLM token budget.
+    Chunks are restored to document order and physically adjacent passages are
+    merged to improve narrative continuity without introducing unrelated text.
 
     Args:
-        retrieved_items (list): A list of dictionaries containing 'chunk' data.
+        retrieved_items (list): Retrieval entries containing chunk metadata and scores.
 
     Returns:
-        str: A cleanly formatted, citation-ready string of contextual passages.
+        str: Formatted context string for grounded generation.
     """
-    # Sort by chunk ID to restore chronological order
-    sorted_items = sorted(retrieved_items, key=lambda x: x["chunk"]["id"])
+    # Restore document order after relevance-ranked FAISS retrieval.
+    sorted_items = sorted(retrieved_items, key=lambda item: item["chunk"]["id"])
     assembled_blocks = []
     current_group = []
 
@@ -70,55 +68,56 @@ def _assemble_context(retrieved_items: list) -> str:
         chunk = item["chunk"]
         if not current_group:
             current_group.append(chunk)
+            continue
+
+        last_chunk = current_group[-1]
+        # Merge physically adjacent chunks to recover local narrative continuity.
+        if abs(chunk["start_char"] - last_chunk["end_char"]) < 20:
+            current_group.append(chunk)
         else:
-            last_chunk = current_group[-1]
-            # Merge if the chunks are physically adjacent in the original text (within 20 characters)
-            if abs(chunk["start_char"] - last_chunk["end_char"]) < 20:
-                current_group.append(chunk)
-            else:
-                assembled_blocks.append(current_group)
-                current_group = [chunk]
-                
+            assembled_blocks.append(current_group)
+            current_group = [chunk]
+
     if current_group:
         assembled_blocks.append(current_group)
 
-    context_strs = []
+    context_blocks = []
     for group in assembled_blocks:
         if len(group) == 1:
-            context_strs.append(f"[Chunk {group[0]['id']}]: {group[0]['text']}")
-        else:
-            start_id = group[0]['id']
-            end_id = group[-1]['id']
-            combined_text = " ".join([c['text'] for c in group])
-            context_strs.append(f"[Chunks {start_id}-{end_id}]: {combined_text}")
+            context_blocks.append(f"[Chunk {group[0]['id']}]: {group[0]['text']}")
+            continue
 
-    return "\n\n".join(context_strs)
+        start_id = group[0]["id"]
+        end_id = group[-1]["id"]
+        combined_text = " ".join(chunk["text"] for chunk in group)
+        context_blocks.append(f"[Chunks {start_id}-{end_id}]: {combined_text}")
+
+    return "\n\n".join(context_blocks)
+
 
 def _build_prompt(query: str, context_str: str) -> tuple[str, str]:
     """
-    Constructs a rigid, hallucination-resistant prompt for the RAG generation phase.
-
-    Enforces strict grounding rules, forcing the LLM to decline answering if the 
-    context is insufficient, and demanding inline source citations.
+    Constructs a hallucination-resistant prompt for grounded document QA.
 
     Args:
-        query (str): The user's input question.
-        context_str (str): The assembled semantic context string.
+        query (str): Question submitted against the indexed document.
+        context_str (str): Retrieved document evidence.
 
     Returns:
-        tuple[str, str]: The (System Prompt, User Prompt) message pair.
+        tuple[str, str]: System and user prompt pair.
     """
     system_prompt = """You are Lexos Gleaner, an expert AI research assistant.
-You will answer the user's question based ONLY on the provided context.
+Answer the question based ONLY on the provided context.
 
 CRITICAL RULES:
-1. If the answer cannot be found in the context, explicitly say: "I cannot find the answer in the provided document." Do NOT guess or use outside knowledge.
+1. If the answer cannot be found in the context, explicitly say: \"I cannot find the answer in the provided document.\" Do NOT guess or use outside knowledge.
 2. If multiple chunks support the answer, cite ALL of them.
 3. Never cite a chunk that was not provided in the context.
 4. Keep the answer concise, objective, and strictly factual.
 5. Never output <think> tags or internal reasoning."""
 
-    user_prompt = f"""CONTEXT:
+    user_prompt = f"""/no_think
+CONTEXT:
 {context_str}
 
 QUESTION:
@@ -128,147 +127,204 @@ Answer the question strictly using the context above."""
 
     return system_prompt, user_prompt
 
-def process_qa_task(task_data: dict) -> dict:
-    """
-    Executes the Vector QA pipeline and handles Server-Sent Event (SSE) streaming.
 
-    Retrieves highly relevant semantic chunks via FAISS Cosine Similarity, formulates 
-    a strict grounding prompt, executes Qwen3 inference, filters internal reasoning 
-    tags on-the-fly, and streams the clean response token-by-token via Redis Pub/Sub.
+def _clean_stream_delta(delta: str, state: dict[str, object]) -> str:
+    """
+    Removes Qwen thinking blocks from streaming output across token boundaries.
 
     Args:
-        task_data (dict): Queue payload containing 'task_id', 'document_id', and 'query'.
-
-    Raises:
-        ValueError: If mandatory query parameters are missing.
+        delta (str): Newly generated stream fragment.
+        state (dict[str, object]): Mutable parser state containing buffer and mode.
 
     Returns:
-        dict: A finalized summary payload with the full answer and citation scores.
+        str: Safe answer text ready for publication.
+    """
+    buffer = str(state.get("buffer", "")) + delta
+    is_thinking = bool(state.get("is_thinking", False))
+    output = []
+
+    while buffer:
+        if is_thinking:
+            end_index = buffer.find("</think>")
+            if end_index == -1:
+                keep = min(len(buffer), len("</think>") - 1)
+                state["buffer"] = buffer[-keep:] if keep else ""
+                state["is_thinking"] = True
+                return "".join(output)
+            buffer = buffer[end_index + len("</think>"):]
+            is_thinking = False
+            continue
+
+        start_index = buffer.find("<think>")
+        if start_index == -1:
+            suffix_length = 0
+            for length in range(1, min(len(buffer), len("<think>") - 1) + 1):
+                if "<think>".startswith(buffer[-length:]):
+                    suffix_length = length
+            if suffix_length:
+                output.append(buffer[:-suffix_length])
+                state["buffer"] = buffer[-suffix_length:]
+            else:
+                output.append(buffer)
+                state["buffer"] = ""
+            state["is_thinking"] = False
+            return "".join(output)
+
+        output.append(buffer[:start_index])
+        buffer = buffer[start_index + len("<think>"):]
+        is_thinking = True
+
+    state["buffer"] = ""
+    state["is_thinking"] = is_thinking
+    return "".join(output)
+
+
+def process_qa_task(task_data: dict) -> dict:
+    """
+    Executes vector retrieval and streams grounded Qwen3 answers through Redis.
+
+    Args:
+        task_data (dict): Queue payload containing task_id, document_id,
+            artifact_id, index_s3_key, meta_s3_key, and query.
+
+    Raises:
+        ValueError: If mandatory identifiers or query text are missing.
+
+    Returns:
+        dict: Final answer payload with retrieval source scores.
     """
     embedding_model = get_embedding_model()
     llm = get_llm()
-    
+
     task_id = task_data.get("task_id")
     document_id = task_data.get("document_id")
+    artifact_id = task_data.get("artifact_id") or document_id
+    index_s3_key = task_data.get("index_s3_key")
+    meta_s3_key = task_data.get("meta_s3_key")
     query = task_data.get("query")
-    
-    if not all([task_id, document_id, query]):
-        raise ValueError("task_id, document_id, and query are all required.")
-        
-    index, metadata = _get_index_and_meta(document_id)
-        
-    # Embed the query (Point 14)
-    logger.info(f"Embedding query: '{query}'")
+
+    if not all([task_id, document_id, artifact_id, index_s3_key, meta_s3_key, query]):
+        raise ValueError(
+            "task_id, document_id, artifact_id, index_s3_key, meta_s3_key, and query are required."
+        )
+
+    index, metadata = _get_index_and_meta(artifact_id, index_s3_key, meta_s3_key)
+
+    # E5 query embeddings require the explicit "query: " prefix.
+    logger.info(f"Embedding query for artifact {artifact_id}: '{query}'")
     query_embedding = next(embedding_model.embed([f"query: {query}"])).astype(np.float32)
     query_embedding = np.expand_dims(query_embedding, axis=0)
     faiss.normalize_L2(query_embedding)
-    
-    # Retrieve Top-5 chunks
-    k = 5
-    distances, indices = index.search(query_embedding, k)
-    
-    retrieved_items = []
-    for i, idx in enumerate(indices[0]):
-        if idx != -1:
-            score = float(distances[0][i])
-            if score >= 0.45:  # Filter out low-relevance garbage
+
+    # Retrieve at most five candidates and never request more neighbors than the index contains.
+    k = min(5, int(index.ntotal))
+    if k <= 0:
+        retrieved_items = []
+    else:
+        distances, indices = index.search(query_embedding, k)
+        retrieved_items = []
+        for position, idx in enumerate(indices[0]):
+            if idx == -1:
+                continue
+            score = float(distances[0][position])
+            if score >= 0.45:
                 retrieved_items.append({
                     "chunk": metadata["chunks"][idx],
-                    "score": score
+                    "score": score,
                 })
-                
-    # Explicitly sort by highest score first
-    retrieved_items.sort(key=lambda x: x["score"], reverse=True)
 
-    # Empty context check (Point 13)
+    # Preserve descending retrieval scores for citations and debugging metadata.
+    retrieved_items.sort(key=lambda item: item["score"], reverse=True)
+
+    # Use a dedicated Redis connection for publishing SSE token events.
+    redis_url = os.getenv("REDIS_URL", "redis://redis:6379")
+    if not redis_url.startswith("redis://") and not redis_url.startswith("rediss://"):
+        redis_url = f"redis://{redis_url}"
+    redis_client = redis.from_url(
+        redis_url,
+        decode_responses=True,
+        socket_keepalive=True,
+        socket_timeout=None,
+        health_check_interval=30,
+    )
+    stream_channel = f"lexos:stream:{task_id}"
+
+    # Return the grounded fallback immediately when retrieval provides no admissible evidence.
     if not retrieved_items:
+        fallback = "I cannot find the answer in the provided document."
+        redis_client.publish(stream_channel, json.dumps({"token": fallback}))
+        redis_client.publish(stream_channel, "[DONE]")
         return {
             "task_id": task_id,
-            "answer": "I cannot find the answer in the provided document.",
-            "sources_used": []
+            "document_id": document_id,
+            "artifact_id": artifact_id,
+            "query": query,
+            "answer": fallback,
+            "sources": [],
         }
-            
-    # Assemble context (Point 3)
+
+    # Assemble only retrieved evidence into the generation context.
     context_str = _assemble_context(retrieved_items)
-            
     system_prompt, user_prompt = _build_prompt(query, context_str)
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt}
+        {"role": "user", "content": user_prompt},
     ]
-    
-    # Robust Redis connection (Point 7)
-    redis_url = os.getenv("REDIS_URL", "redis://redis:6379")
-    if not redis_url.startswith("redis://"):
-        redis_url = f"redis://{redis_url}"
-    r = redis.from_url(
-            redis_url, 
-            decode_responses=True, 
-            socket_keepalive=True,
-            socket_timeout=None,
-            health_check_interval=30
-        )
-    stream_channel = f"lexos:stream:{task_id}"
-    
+
     logger.info(f"Starting Qwen3 streaming generation for {task_id}...")
-    
-    # Generation parameters (Points 9, 10, 11)
+    # Deterministic generation settings keep grounded QA behavior reproducible.
     streamer = llm.create_chat_completion(
         messages=messages,
         max_tokens=1024,
         temperature=0.0,
         seed=42,
-        stream=True
+        stream=True,
     )
-    
+
     full_answer = ""
-    is_thinking = False
+    think_state: dict[str, object] = {"buffer": "", "is_thinking": False}
 
     for chunk in streamer:
         delta = chunk["choices"][0]["delta"].get("content", "")
         if not delta:
             continue
 
-        # Toggle thinking state
-        if "<think>" in delta:
-            is_thinking = True
-            delta = delta.replace("<think>", "")
-            
-        if "</think>" in delta:
-            is_thinking = False
-            delta = delta.replace("</think>", "")
-            
-        # If the model is currently thinking, swallow the tokens
-        if is_thinking:
+        # Suppress internal thinking blocks even when tags are split across stream chunks.
+        safe_delta = _clean_stream_delta(delta, think_state)
+        if not safe_delta:
+            continue
+        if not full_answer and safe_delta.strip() == "":
             continue
 
-        # Prevent empty leading newlines right after it finishes thinking
-        if not full_answer and delta.strip() == "":
-            continue
+        full_answer += safe_delta
+        redis_client.publish(stream_channel, json.dumps({"token": safe_delta}))
 
-        if delta:
-            full_answer += delta
-            r.publish(stream_channel, json.dumps({"token": delta}))
+    trailing = str(think_state.get("buffer", ""))
+    if trailing and not bool(think_state.get("is_thinking", False)):
+        full_answer += trailing
+        redis_client.publish(stream_channel, json.dumps({"token": trailing}))
 
-    # If the model spent ALL tokens thinking and never outputted a final answer
+    # Guarantee a user-visible terminal answer when the model spends the full budget without output.
     if not full_answer.strip():
-        fallback_msg = "The model ran out of token budget during reasoning. Please try narrowing your question."
-        full_answer = fallback_msg
-        r.publish(stream_channel, json.dumps({"token": fallback_msg}))
-            
-    r.publish(stream_channel, "[DONE]")
+        fallback = "The model exhausted the generation budget before producing a final answer."
+        full_answer = fallback
+        redis_client.publish(stream_channel, json.dumps({"token": fallback}))
+
+    redis_client.publish(stream_channel, "[DONE]")
     logger.info("Generation complete and [DONE] flag sent.")
-    
-    # Return JSON with rich citation metrics (Point 15)
+
+    # Return retrieval scores with the final answer for traceability and tests.
     return {
         "task_id": task_id,
         "document_id": document_id,
+        "artifact_id": artifact_id,
         "query": query,
         "answer": full_answer.strip(),
         "sources": [
             {
-                "chunk_id": item["chunk"]["id"], 
-                "score": round(item["score"], 4)
-            } for item in retrieved_items
-        ]
+                "chunk_id": item["chunk"]["id"],
+                "score": round(item["score"], 4),
+            }
+            for item in retrieved_items
+        ],
     }
