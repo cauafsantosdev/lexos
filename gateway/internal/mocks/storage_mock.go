@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
+// MockStorageClient provides a testify-backed S3-compatible storage dependency.
 type MockStorageClient struct {
 	mock.Mock
 }
@@ -27,4 +28,13 @@ func (m *MockStorageClient) GetObject(ctx context.Context, bucket string, key st
 		return args.Get(0).(io.ReadCloser), args.Error(1)
 	}
 	return nil, args.Error(1)
+}
+
+func (m *MockStorageClient) RemoveObject(ctx context.Context, bucket string, key string) error {
+	args := m.Called(ctx, bucket, key)
+	return args.Error(0)
+}
+
+func (m *MockStorageClient) BucketName() string {
+	return "lexos-storage"
 }

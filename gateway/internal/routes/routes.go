@@ -12,8 +12,8 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 	"golang.org/x/time/rate"
 
-	_ "lexos-gateway/docs"
 	echoSwagger "github.com/swaggo/echo-swagger"
+	_ "lexos-gateway/docs"
 )
 
 // Register wires up all the API endpoints
@@ -46,13 +46,13 @@ func Register(e *echo.Echo) {
 
 	// Swagger UI Route
 	e.GET("/swagger/*", echoSwagger.WrapHandler)
-	
+
 	// Scriber Service Endpoint
 	e.POST("/transcribe", api.HandleTranscriptionRequest, aiLimiter)
 
 	// Distiller Service Endpoint
 	e.POST("/summarize", api.HandleSummarizationRequest, aiLimiter)
-	
+
 	// Gleaner Service Indexing Endpoint
 	e.POST("/glean/index", api.IndexDocument, aiLimiter)
 
