@@ -25,9 +25,9 @@ func main() {
 		log.Fatalf("Fatal: Could not connect to Redis: %v", err)
 	}
 
-	// Initialize MinIO storage
-	if err := storage.InitMinIO(); err != nil {
-		log.Fatalf("Fatal: Could not connect to MinIO: %v", err)
+	// Initialize S3-compatible object storage (MinIO in development, R2 in production)
+	if err := storage.InitObjectStorage(); err != nil {
+		log.Fatalf("Fatal: Could not connect to object storage: %v", err)
 	}
 
 	// Setup Echo
@@ -39,7 +39,7 @@ func main() {
 		AllowMethods: []string{http.MethodGet, http.MethodPost, http.MethodOptions},
 		AllowHeaders: []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept},
 	}))
-	
+
 	// Standard Middleware
 	e.Use(middleware.RequestLoggerWithConfig(middleware.RequestLoggerConfig{
 		LogStatus: true,
