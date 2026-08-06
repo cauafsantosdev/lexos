@@ -1,6 +1,6 @@
 services:
   lexos-gateway:
-    build: 
+    build:
       context: ./gateway
       dockerfile: Dockerfile
     ports:
@@ -8,26 +8,35 @@ services:
     volumes:
       - ./gateway:/app
     depends_on:
-      - redis
-      - lexos-minio
+      redis:
+        condition: service_healthy
+      lexos-minio-init:
+        condition: service_completed_successfully
     environment:
       - REDIS_URL=${REDIS_URL}
-      - MINIO_ENDPOINT=${MINIO_ENDPOINT}
-      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER}
-      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD}
-      - MINIO_BUCKET=${MINIO_BUCKET}
-      - MINIO_USE_SSL=${MINIO_USE_SSL}
+      - S3_ENDPOINT=${S3_ENDPOINT}
+      - S3_ACCESS_KEY=${S3_ACCESS_KEY}
+      - S3_SECRET_KEY=${S3_SECRET_KEY}
+      - S3_BUCKET=${S3_BUCKET}
+      - S3_USE_SSL=${S3_USE_SSL}
+      - S3_REGION=${S3_REGION}
+      - S3_AUTO_CREATE_BUCKET=${S3_AUTO_CREATE_BUCKET}
+      - CACHE_TTL_SECONDS=${CACHE_TTL_SECONDS}
+      - TASK_TTL_SECONDS=${TASK_TTL_SECONDS}
+      - PROCESSING_LOCK_TTL_SECONDS=${PROCESSING_LOCK_TTL_SECONDS}
 
   lexos-worker:
-    build: 
+    build:
       context: ./worker
       dockerfile: Dockerfile
     volumes:
       - ./worker:/app
       - ./models:/models
     depends_on:
-      - redis
-      - lexos-minio
+      redis:
+        condition: service_healthy
+      lexos-minio-init:
+        condition: service_completed_successfully
     deploy:
       resources:
         limits:
@@ -38,11 +47,14 @@ services:
       - OMP_NUM_THREADS=2
       - HF_HOME=/models
       - HF_TOKEN=${HF_TOKEN}
-      - MINIO_ENDPOINT=${MINIO_ENDPOINT}
-      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER}
-      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD}
-      - MINIO_BUCKET=${MINIO_BUCKET}
-      - MINIO_USE_SSL=${MINIO_USE_SSL}
+      - S3_ENDPOINT=${S3_ENDPOINT}
+      - S3_ACCESS_KEY=${S3_ACCESS_KEY}
+      - S3_SECRET_KEY=${S3_SECRET_KEY}
+      - S3_BUCKET=${S3_BUCKET}
+      - S3_USE_SSL=${S3_USE_SSL}
+      - S3_REGION=${S3_REGION}
+      - CACHE_TTL_SECONDS=${CACHE_TTL_SECONDS}
+      - TASK_TTL_SECONDS=${TASK_TTL_SECONDS}
 
   lexos-minio:
     image: minio/minio:latest
@@ -52,15 +64,37 @@ services:
       - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
     command: server /data --console-address ":9001"
     ports:
-      - "9000:9000" # S3 API Port
-      - "9001:9001" # Web Console Port
+      - "9000:9000"
+      - "9001:9001"
     volumes:
       - minio_data:/data
 
+  lexos-minio-init:
+    image: minio/mc:latest
+    depends_on:
+      lexos-minio:
+        condition: service_started
+    volumes:
+      - ./infra/lifecycle.json:/config/lifecycle.json:ro
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set lexos http://lexos-minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD}; do sleep 2; done;
+      mc mb --ignore-existing lexos/${S3_BUCKET} &&
+      mc ilm rule import lexos/${S3_BUCKET} < /config/lifecycle.json
+      "
+
   redis:
-    image: "redis:8.8.0-alpine"
+    image: redis:8.8.0-alpine
+    command: redis-server --appendonly yes
     ports:
       - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   lexos-frontend:
     build:
@@ -79,3 +113,4 @@ services:
 
 volumes:
   minio_data:
+  redis_data:
