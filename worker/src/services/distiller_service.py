@@ -1,4 +1,5 @@
 import re
+import time
 from utils.logger import get_logger
 from utils.model_manager import get_llm
 from utils.file_parser import extract_text
@@ -28,31 +29,72 @@ def _sanitize_document(text: str) -> str:
     
     return text
 
-def _chunk_text(text: str, chunk_size: int = 6500, overlap: int = 500) -> list[str]:
+def _chunk_text_by_tokens(
+    text: str,
+    llm,
+    chunk_size: int = 1500,
+    overlap: int = 96,
+) -> list[str]:
     """
-    Splits large text into manageable overlapping chunks to fit within the LLM context window.
+    Splits text into overlapping chunks using the generation model tokenizer.
+
+    Token-aware chunking keeps each Map input within a known token budget and
+    avoids relying on the variable relationship between characters and model
+    tokens.
 
     Args:
         text (str): The full document text to be chunked.
-        chunk_size (int, optional): The maximum character length of each chunk. Defaults to 6500.
-        overlap (int, optional): The number of characters to overlap between chunks to preserve context. Defaults to 500.
+        llm: Loaded Llama.cpp model instance providing the Qwen tokenizer.
+        chunk_size (int, optional): Maximum number of source tokens per chunk.
+            Defaults to MAP_CHUNK_SIZE_TOKENS.
+        overlap (int, optional): Number of tokens shared between consecutive
+            chunks. Defaults to MAP_CHUNK_OVERLAP_TOKENS.
 
     Returns:
-        list[str]: A list of text chunks.
+        list[str]: Ordered text chunks reconstructed from Qwen token sequences.
+
+    Raises:
+        ValueError: If the chunk size or overlap configuration is invalid.
     """
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be greater than zero")
+
+    if overlap < 0:
+        raise ValueError("overlap cannot be negative")
+
+    if overlap >= chunk_size:
+        raise ValueError("overlap must be smaller than chunk_size")
+
     if not text:
         return []
-        
-    chunks = []
-    start = 0
-    while start < len(text):
-        end = start + chunk_size
-        chunks.append(text[start:end])
 
-        if end >= len(text):
+    tokens = llm.tokenize(
+        text.encode("utf-8"),
+        add_bos=False,
+        special=False,
+    )
+
+    if not tokens:
+        return []
+
+    chunks = []
+    step = chunk_size - overlap
+
+    for start in range(0, len(tokens), step):
+        end = min(start + chunk_size, len(tokens))
+        chunk_tokens = tokens[start:end]
+
+        chunk = llm.detokenize(
+            chunk_tokens,
+            special=False,
+        ).decode("utf-8", errors="replace").strip()
+
+        if chunk:
+            chunks.append(chunk)
+
+        if end == len(tokens):
             break
-            
-        start += chunk_size - overlap
+
     return chunks
 
 def _run_inference(system_prompt: str, user_prompt: str, max_tokens: int = 512) -> str:
@@ -73,11 +115,26 @@ def _run_inference(system_prompt: str, user_prompt: str, max_tokens: int = 512) 
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt}
     ]
+
+    started_at = time.perf_counter()
     
     response = llm.create_chat_completion(
         messages=messages,
         max_tokens=max_tokens,
         temperature=0
+    )
+
+    elapsed = time.perf_counter() - started_at
+
+    usage = response.get("usage", {})
+
+    logger.info(
+        "Inference completed in %.2fs "
+        "(prompt_tokens=%s, completion_tokens=%s, total_tokens=%s)",
+        elapsed,
+        usage.get("prompt_tokens", "unknown"),
+        usage.get("completion_tokens", "unknown"),
+        usage.get("total_tokens", "unknown"),
     )
     
     raw_output = response["choices"][0]["message"]["content"].strip()
@@ -122,10 +179,18 @@ def process_summarization_task(task_data: dict) -> dict:
     original_text_length = len(doc_text)
     style = task_data.get("style", "bullet_points")
 
+    llm = get_llm()
+    document_tokens = llm.tokenize(
+        doc_text.encode("utf-8"),
+        add_bos=False,
+        special=False,
+    )
+    document_token_count = len(document_tokens)
+
     # Hierarchical map-reduce logic
-    if original_text_length > 6500:
-        logger.info(f"Document length ({original_text_length} chars) exceeds single window. Initiating Map-Reduce...")
-        chunks = _chunk_text(doc_text)
+    if document_token_count > 1500:
+        logger.info(f"Document length ({document_token_count} tokens) exceeds single window. Initiating Map-Reduce...")
+        chunks = _chunk_text_by_tokens(doc_text, llm)
         intermediate_facts = []
         
         map_system_prompt = build_map_system_prompt()

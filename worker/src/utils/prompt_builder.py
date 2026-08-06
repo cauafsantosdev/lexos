@@ -52,7 +52,8 @@ def build_map_user_prompt(text_chunk: str) -> str:
     Returns:
         str: The formatted prompt injecting the text chunk for fact extraction.
     """
-    return f"""Extract the key facts and exact metrics from this chunk of text, ignoring all citations and previous work:
+    return f"""/no_think
+Extract the key facts and exact metrics from this chunk of text, ignoring all citations and previous work:
 
 ```text
 {text_chunk}
@@ -98,7 +99,8 @@ def build_reduce_user_prompt(extracted_facts: str) -> str:
     Returns:
         str: The formatted prompt injecting the facts for final summary generation.
     """
-    return f"""Synthesize the following extracted facts into the final summary based on your instructions:
+    return f"""/no_think
+Synthesize the following extracted facts into the final summary based on your instructions:
 
 ```text
 {extracted_facts}
