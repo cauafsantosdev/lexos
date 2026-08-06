@@ -24,7 +24,7 @@ import {
   summarizeFile,
   summarizeText,
 } from "@/lib/api";
-import type { SummaryStyle, TaskResponse } from "@/lib/types";
+import type { SummaryStyle, TaskAcceptedResponse, TaskResponse } from "@/lib/types";
 
 type InputMode = "file" | "text";
 
@@ -42,7 +42,7 @@ export default function DistillerPage() {
   const [taskId, setTaskId] = useState<string | null>(null);
   const lastNotifiedTask = useRef<string | null>(null);
 
-  const mutation = useMutation({
+  const mutation = useMutation<TaskAcceptedResponse, Error, void>({
     mutationFn: async () => {
       if (mode === "file") {
         if (!document) {
@@ -60,12 +60,16 @@ export default function DistillerPage() {
 
       return summarizeText(trimmedText, style);
     },
-    onSuccess: (task) => {
+    onSuccess: (task: TaskAcceptedResponse) => {
       setTaskId(task.task_id);
-      lastNotifiedTask.current = null;
-      toast.success("Summary started");
+      lastNotifiedTask.current = task.cache_hit ? task.task_id : null;
+      toast.success(task.cache_hit ? "Cached summary ready" : "Summary started", {
+        description: task.deduplicated
+          ? "Existing processing was reused for identical content and summary settings."
+          : undefined,
+      });
     },
-    onError: (error) => {
+    onError: (error: Error) => {
       toast.error("Could not start summary", {
         description: error.message,
       });
@@ -76,7 +80,7 @@ export default function DistillerPage() {
     queryKey: ["task", taskId],
     queryFn: () => getTask(taskId as string),
     enabled: Boolean(taskId),
-    refetchInterval: (query) => {
+    refetchInterval: (query: { state: { data?: TaskResponse } }) => {
       const task = query.state.data as TaskResponse | undefined;
       return task?.status === "completed" || task?.status === "failed"
         ? false

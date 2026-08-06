@@ -24,7 +24,7 @@ import {
   indexDocument,
   streamGleanAnswer,
 } from "@/lib/api";
-import type { ChatMessage, TaskResponse } from "@/lib/types";
+import type { ChatMessage, GleanIndexAcceptedResponse, TaskResponse } from "@/lib/types";
 
 function getErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message.trim()
@@ -44,7 +44,7 @@ export default function GleanerPage() {
   const lastNotifiedTask = useRef<string | null>(null);
   const lastTaskPollingError = useRef<string | null>(null);
 
-  const indexMutation = useMutation({
+  const indexMutation = useMutation<GleanIndexAcceptedResponse, Error, File>({
     mutationFn: indexDocument,
   });
 
@@ -52,7 +52,7 @@ export default function GleanerPage() {
     queryKey: ["task", taskId],
     queryFn: () => getTask(taskId as string),
     enabled: Boolean(taskId),
-    refetchInterval: (queryState) => {
+    refetchInterval: (queryState: { state: { data?: TaskResponse } }) => {
       const task = queryState.state.data as TaskResponse | undefined;
 
       return task?.status === "completed" || task?.status === "failed"
@@ -152,10 +152,19 @@ export default function GleanerPage() {
       const acceptedIndex = await indexMutation.mutateAsync(document);
 
       setTaskId(acceptedIndex.document_id);
+      if (acceptedIndex.status === "completed") {
+        setDocumentId(acceptedIndex.document_id);
+        lastNotifiedTask.current = acceptedIndex.task_id;
+      }
 
-      toast.success("Indexing started", {
-        description: "Lexos is preparing your document for questions.",
-      });
+      toast.success(
+        acceptedIndex.cache_hit ? "Cached document index ready" : "Indexing started",
+        {
+          description: acceptedIndex.deduplicated
+            ? "Existing indexing work was reused for identical document content."
+            : "Lexos is preparing the document for questions.",
+        },
+      );
     } catch (error) {
       toast.error("Could not start indexing", {
         description: getErrorMessage(

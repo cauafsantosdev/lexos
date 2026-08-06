@@ -11,21 +11,25 @@ import { NeoCard } from "@/components/ui/neo-card";
 import { PageIntro } from "@/components/ui/page-intro";
 import { TaskProgress, TaskSkeleton } from "@/components/ui/task-progress";
 import { fetchTranscriptionResult, getTask, transcribeAudio } from "@/lib/api";
-import type { TaskResponse } from "@/lib/types";
+import type { TaskAcceptedResponse, TaskResponse } from "@/lib/types";
 
 export default function ScriberPage() {
   const [audio, setAudio] = useState<File | null>(null);
   const [taskId, setTaskId] = useState<string | null>(null);
   const lastNotifiedTask = useRef<string | null>(null);
 
-  const mutation = useMutation({
+  const mutation = useMutation<TaskAcceptedResponse, Error, File>({
     mutationFn: transcribeAudio,
-    onSuccess: (task) => {
+    onSuccess: (task: TaskAcceptedResponse) => {
       setTaskId(task.task_id);
-      lastNotifiedTask.current = null;
-      toast.success("Transcription started");
+      lastNotifiedTask.current = task.cache_hit ? task.task_id : null;
+      toast.success(task.cache_hit ? "Cached transcription ready" : "Transcription started", {
+        description: task.deduplicated
+          ? "Existing processing was reused for identical audio."
+          : undefined,
+      });
     },
-    onError: (error) => {
+    onError: (error: Error) => {
       toast.error("Could not start transcription", {
         description: error.message,
       });
@@ -36,7 +40,7 @@ export default function ScriberPage() {
     queryKey: ["task", taskId],
     queryFn: () => getTask(taskId as string),
     enabled: Boolean(taskId),
-    refetchInterval: (query) => {
+    refetchInterval: (query: { state: { data?: TaskResponse } }) => {
       const task = query.state.data as TaskResponse | undefined;
       return task?.status === "completed" || task?.status === "failed"
         ? false

@@ -49,9 +49,13 @@ function isGleanIndexAcceptedResponse(
   const payload = value as Record<string, unknown>;
 
   return (
+    typeof payload.task_id === "string" &&
+    payload.task_id.length > 0 &&
     typeof payload.document_id === "string" &&
     payload.document_id.length > 0 &&
-    payload.status === "queued" &&
+    (payload.status === "queued" ||
+      payload.status === "processing" ||
+      payload.status === "completed") &&
     typeof payload.message === "string"
   );
 }

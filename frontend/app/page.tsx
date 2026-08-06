@@ -76,7 +76,7 @@ const architecture = [
     accent: "white",
   },
   {
-    label: "MinIO",
+    label: "Cloudflare R2",
     detail: "Artifact storage",
     icon: Archive,
     accent: "mint",
