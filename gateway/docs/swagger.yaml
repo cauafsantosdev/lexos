@@ -1,240 +1,267 @@
-basePath: /
-definitions:
-  handlers.SummarizeRequest:
-    properties:
-      document_text:
-        type: string
-      style:
-        type: string
-    type: object
-host: localhost:8000
+swagger: '2.0'
 info:
-  contact: {}
   description: The cloud-native API gateway for the Lexos AI document processing engine.
   title: Lexos API
-  version: "1.0"
+  contact: {}
+  version: '1.0'
+host: localhost:8000
+basePath: /
 paths:
   /glean/ask:
     get:
-      description: Submits a query against a previously indexed document and streams
-        the AI's answer token-by-token via Server-Sent Events (SSE).
-      parameters:
-      - description: The task_id of the previously indexed document
-        in: query
-        name: document_id
-        required: true
-        type: string
-      - description: The user's question
-        in: query
-        name: query
-        required: true
-        type: string
+      description: Submits a query against a completed Gleaner indexing task and streams
+        the grounded answer token-by-token through Server-Sent Events (SSE).
       produces:
       - text/event-stream
+      tags:
+      - Gleaner
+      summary: Ask a question against an indexed document
+      parameters:
+      - type: string
+        description: The task_id of the completed indexing task
+        name: document_id
+        in: query
+        required: true
+      - type: string
+        description: Question to answer from the indexed document
+        name: query
+        in: query
+        required: true
       responses:
-        "200":
+        '200':
           description: SSE Stream
           schema:
             type: string
-        "400":
+        '400':
           description: Missing parameters
           schema:
+            type: object
             additionalProperties:
               type: string
-            type: object
-        "500":
+        '500':
           description: Internal server error
           schema:
+            type: object
             additionalProperties:
               type: string
+        '404':
+          description: Indexed document not found
+          schema:
             type: object
-      summary: Ask a question against an indexed document
-      tags:
-      - Gleaner
+            additionalProperties:
+              type: string
+        '409':
+          description: Document indexing not completed
+          schema:
+            type: object
+            additionalProperties:
+              type: string
   /glean/index:
     post:
+      description: Streams a document to S3-compatible storage, chunks it, embeds
+        it through FastEmbed, and builds a FAISS index in the background. Identical
+        documents reuse completed or in-flight indexes.
       consumes:
       - multipart/form-data
-      description: Streams a document to MinIO, chunks it, embeds it via FastEmbed,
-        and builds a FAISS index in the background.
-      parameters:
-      - description: Document to index (.txt, .pdf, .docx)
-        in: formData
-        name: document
-        required: true
-        type: file
       produces:
       - application/json
-      responses:
-        "202":
-          description: Document queued for indexing
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "400":
-          description: Missing document file
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "500":
-          description: Internal server error
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      summary: Upload document for vector indexing
       tags:
       - Gleaner
+      summary: Upload document for vector indexing
+      parameters:
+      - type: file
+        description: Document to index (.txt, .pdf, .docx)
+        name: document
+        in: formData
+        required: true
+      responses:
+        '202':
+          description: Document queued for indexing
+          schema:
+            type: object
+            additionalProperties: true
+        '400':
+          description: Missing document file
+          schema:
+            type: object
+            additionalProperties:
+              type: string
+        '500':
+          description: Internal server error
+          schema:
+            type: object
+            additionalProperties:
+              type: string
+        '200':
+          description: Cached index reused successfully
+          schema:
+            type: object
+            additionalProperties: true
   /health:
     get:
       description: Returns the current status of the Lexos Gateway.
       produces:
       - application/json
+      tags:
+      - Core
+      summary: Check API health
       responses:
-        "200":
+        '200':
           description: API is healthy
           schema:
+            type: object
             additionalProperties:
               type: string
-            type: object
-      summary: Check API health
-      tags:
-      - Core
   /summarize:
     post:
+      description: Uploads text or a document (.txt, .pdf, .docx) to the asynchronous
+        Qwen3 Map-Reduce pipeline. Identical content reuses completed or in-flight
+        work when the summary style matches.
       consumes:
       - multipart/form-data
       - application/json
-      description: Uploads a text payload or a document (.txt, .pdf, .docx) to MinIO
-        and queues it for Map-Reduce summarization by Qwen3.
-      parameters:
-      - description: Document to summarize (if using multipart)
-        in: formData
-        name: document
-        type: file
-      - description: Summary style (bullet_points, short_paragraph, executive)
-        in: formData
-        name: style
-        type: string
-      - description: JSON payload (if using application/json)
-        in: body
-        name: body
-        schema:
-          $ref: '#/definitions/handlers.SummarizeRequest'
       produces:
       - application/json
-      responses:
-        "202":
-          description: Task queued successfully
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "400":
-          description: Invalid request
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "500":
-          description: Internal server error
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      summary: Submit a document for AI summarization
       tags:
       - Distiller
-  /task/{id}:
-    get:
-      consumes:
-      - application/json
-      description: Fetches the current processing state and result URLs for a given
-        task ID.
+      summary: Submit a document for AI summarization
       parameters:
-      - description: Task ID
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Task state details
-          schema:
-            additionalProperties: true
-            type: object
-        "404":
-          description: Task not found
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      summary: Get the status of an async task
-      tags:
-      - Core
-  /task/{id}/result:
-    get:
-      description: Securely proxies the resulting JSON artifact from private MinIO
-        storage.
-      parameters:
-      - description: Task ID
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: The raw JSON result
-          schema: {}
-        "404":
-          description: Result not found
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      summary: Download task result
-      tags:
-      - Core
-  /transcribe:
-    post:
-      consumes:
-      - multipart/form-data
-      description: Uploads an audio file to MinIO and queues it for transcription
-        using Faster-Whisper.
-      parameters:
-      - description: Audio file to transcribe
+      - type: file
+        description: Document to summarize (if using multipart)
+        name: document
         in: formData
-        name: audio
-        required: true
-        type: file
-      produces:
-      - application/json
+      - type: string
+        description: Summary style (bullet_points, short_paragraph, executive)
+        name: style
+        in: formData
+      - description: JSON payload (if using application/json)
+        name: body
+        in: body
+        schema:
+          $ref: '#/definitions/handlers.SummarizeRequest'
       responses:
-        "202":
+        '202':
           description: Task queued successfully
           schema:
-            additionalProperties:
-              type: string
             type: object
-        "400":
-          description: Missing audio file
+            additionalProperties: true
+        '400':
+          description: Invalid request
           schema:
+            type: object
             additionalProperties:
               type: string
-            type: object
-        "500":
+        '500':
           description: Internal server error
           schema:
+            type: object
             additionalProperties:
               type: string
+        '200':
+          description: Cached task reused successfully
+          schema:
             type: object
-      summary: Submit audio for transcription
+            additionalProperties: true
+  /task/{id}:
+    get:
+      description: Fetches the current processing state and result URL for a given
+        task ID.
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      tags:
+      - Core
+      summary: Get the status of an async task
+      parameters:
+      - type: string
+        description: Task ID
+        name: id
+        in: path
+        required: true
+      responses:
+        '200':
+          description: Task state details
+          schema:
+            type: object
+            additionalProperties: true
+        '404':
+          description: Task not found
+          schema:
+            type: object
+            additionalProperties:
+              type: string
+  /task/{id}/result:
+    get:
+      description: Securely proxies the resulting JSON artifact from private S3-compatible
+        object storage.
+      produces:
+      - application/json
+      tags:
+      - Core
+      summary: Download task result
+      parameters:
+      - type: string
+        description: Task ID
+        name: id
+        in: path
+        required: true
+      responses:
+        '200':
+          description: The raw JSON result
+          schema: {}
+        '404':
+          description: Result not found
+          schema:
+            type: object
+            additionalProperties:
+              type: string
+  /transcribe:
+    post:
+      description: Uploads an audio file to S3-compatible object storage and queues
+        it for transcription using Faster-Whisper. Identical inputs reuse completed
+        or in-flight processing.
+      consumes:
+      - multipart/form-data
+      produces:
+      - application/json
       tags:
       - Scriber
-swagger: "2.0"
+      summary: Submit audio for transcription
+      parameters:
+      - type: file
+        description: Audio file to transcribe
+        name: audio
+        in: formData
+        required: true
+      responses:
+        '202':
+          description: Task queued successfully
+          schema:
+            type: object
+            additionalProperties: true
+        '400':
+          description: Missing audio file
+          schema:
+            type: object
+            additionalProperties:
+              type: string
+        '500':
+          description: Internal server error
+          schema:
+            type: object
+            additionalProperties:
+              type: string
+        '200':
+          description: Cached task reused successfully
+          schema:
+            type: object
+            additionalProperties: true
+definitions:
+  handlers.SummarizeRequest:
+    type: object
+    properties:
+      document_text:
+        type: string
+      style:
+        type: string

@@ -4,7 +4,6 @@ package docs
 import "github.com/swaggo/swag"
 
 const docTemplate = `{
-    "schemes": {{ marshal .Schemes }},
     "swagger": "2.0",
     "info": {
         "description": "{{escape .Description}}",
@@ -17,7 +16,7 @@ const docTemplate = `{
     "paths": {
         "/glean/ask": {
             "get": {
-                "description": "Submits a query against a previously indexed document and streams the AI's answer token-by-token via Server-Sent Events (SSE).",
+                "description": "Submits a query against a completed Gleaner indexing task and streams the grounded answer token-by-token through Server-Sent Events (SSE).",
                 "produces": [
                     "text/event-stream"
                 ],
@@ -28,14 +27,14 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "The task_id of the previously indexed document",
+                        "description": "The task_id of the completed indexing task",
                         "name": "document_id",
                         "in": "query",
                         "required": true
                     },
                     {
                         "type": "string",
-                        "description": "The user's question",
+                        "description": "Question to answer from the indexed document",
                         "name": "query",
                         "in": "query",
                         "required": true
@@ -65,13 +64,31 @@ const docTemplate = `{
                                 "type": "string"
                             }
                         }
+                    },
+                    "404": {
+                        "description": "Indexed document not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Document indexing not completed",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
                     }
                 }
             }
         },
         "/glean/index": {
             "post": {
-                "description": "Streams a document to MinIO, chunks it, embeds it via FastEmbed, and builds a FAISS index in the background.",
+                "description": "Streams a document to S3-compatible storage, chunks it, embeds it through FastEmbed, and builds a FAISS index in the background. Identical documents reuse completed or in-flight indexes.",
                 "consumes": [
                     "multipart/form-data"
                 ],
@@ -96,9 +113,7 @@ const docTemplate = `{
                         "description": "Document queued for indexing",
                         "schema": {
                             "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "additionalProperties": true
                         }
                     },
                     "400": {
@@ -117,6 +132,13 @@ const docTemplate = `{
                             "additionalProperties": {
                                 "type": "string"
                             }
+                        }
+                    },
+                    "200": {
+                        "description": "Cached index reused successfully",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
                         }
                     }
                 }
@@ -147,7 +169,7 @@ const docTemplate = `{
         },
         "/summarize": {
             "post": {
-                "description": "Uploads a text payload or a document (.txt, .pdf, .docx) to MinIO and queues it for Map-Reduce summarization by Qwen3.",
+                "description": "Uploads text or a document (.txt, .pdf, .docx) to the asynchronous Qwen3 Map-Reduce pipeline. Identical content reuses completed or in-flight work when the summary style matches.",
                 "consumes": [
                     "multipart/form-data",
                     "application/json"
@@ -186,9 +208,7 @@ const docTemplate = `{
                         "description": "Task queued successfully",
                         "schema": {
                             "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "additionalProperties": true
                         }
                     },
                     "400": {
@@ -208,13 +228,20 @@ const docTemplate = `{
                                 "type": "string"
                             }
                         }
+                    },
+                    "200": {
+                        "description": "Cached task reused successfully",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
                     }
                 }
             }
         },
         "/task/{id}": {
             "get": {
-                "description": "Fetches the current processing state and result URLs for a given task ID.",
+                "description": "Fetches the current processing state and result URL for a given task ID.",
                 "consumes": [
                     "application/json"
                 ],
@@ -256,7 +283,7 @@ const docTemplate = `{
         },
         "/task/{id}/result": {
             "get": {
-                "description": "Securely proxies the resulting JSON artifact from private MinIO storage.",
+                "description": "Securely proxies the resulting JSON artifact from private S3-compatible object storage.",
                 "produces": [
                     "application/json"
                 ],
@@ -292,7 +319,7 @@ const docTemplate = `{
         },
         "/transcribe": {
             "post": {
-                "description": "Uploads an audio file to MinIO and queues it for transcription using Faster-Whisper.",
+                "description": "Uploads an audio file to S3-compatible object storage and queues it for transcription using Faster-Whisper. Identical inputs reuse completed or in-flight processing.",
                 "consumes": [
                     "multipart/form-data"
                 ],
@@ -317,9 +344,7 @@ const docTemplate = `{
                         "description": "Task queued successfully",
                         "schema": {
                             "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "additionalProperties": true
                         }
                     },
                     "400": {
@@ -339,6 +364,13 @@ const docTemplate = `{
                                 "type": "string"
                             }
                         }
+                    },
+                    "200": {
+                        "description": "Cached task reused successfully",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
                     }
                 }
             }
@@ -356,7 +388,8 @@ const docTemplate = `{
                 }
             }
         }
-    }
+    },
+    "schemes": {{ marshal .Schemes }}
 }`
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
