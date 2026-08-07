@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { AudioLines, Bot, FileText, Github, Sparkles } from "lucide-react";
+import { AudioLines, Bot, FileText, Sparkles } from "lucide-react";
 import { cn } from "@/lib/cn";
 
 const navigation = [

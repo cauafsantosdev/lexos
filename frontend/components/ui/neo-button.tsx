@@ -32,13 +32,11 @@ export function NeoButton({
   size = "md",
   className,
   type = "button",
-  autoComplete = "off",
   ...props
 }: NeoButtonProps) {
   return (
     <button
       type={type}
-      autoComplete={autoComplete}
       className={cn(
         "inline-flex items-center justify-center gap-2 border-[3px] font-black uppercase tracking-[0.12em] transition-all duration-75 hover:translate-x-[4px] hover:translate-y-[4px] hover:shadow-none focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-green-400 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-x-0 disabled:hover:translate-y-0",
         variantClasses[variant],

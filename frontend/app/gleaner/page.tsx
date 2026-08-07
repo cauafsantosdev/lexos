@@ -63,7 +63,9 @@ export default function GleanerPage() {
 
   const task = taskQuery.data;
 
-
+  const readyDocumentId =
+  documentId ??
+  (task?.status === "completed" && task.result_url ? taskId : null);
 
   useEffect(() => {
     if (!task || lastNotifiedTask.current === task.task_id) {
@@ -114,12 +116,13 @@ export default function GleanerPage() {
     if (
       !taskId ||
       task?.status !== "completed" ||
-      documentId === taskId
+      !task.result_url ||
+      documentId === taskId ||
+      lastNotifiedTask.current === task.task_id
     ) {
       return;
     }
 
-    setDocumentId(taskId);
     lastNotifiedTask.current = task.task_id;
 
     toast.success("Document indexed", {
@@ -181,7 +184,7 @@ export default function GleanerPage() {
 
     const trimmedQuery = query.trim();
 
-    if (!documentId || !trimmedQuery || isStreaming) {
+    if (!readyDocumentId || !trimmedQuery || isStreaming) {
       return;
     }
 
@@ -210,7 +213,7 @@ export default function GleanerPage() {
 
     try {
       await streamGleanAnswer({
-        documentId,
+        documentId: readyDocumentId,
         query: trimmedQuery,
         signal: controller.signal,
         onToken: (token) => {
@@ -295,7 +298,7 @@ export default function GleanerPage() {
         badge={<NeoBadge variant="mint">Interactive RAG</NeoBadge>}
       />
 
-      {!documentId ? (
+      {!readyDocumentId ? (
         <div className="mx-auto max-w-4xl">
           <NeoCard accent="purple" className="p-6 md:p-8">
             <div className="mb-7 flex items-center gap-4">
