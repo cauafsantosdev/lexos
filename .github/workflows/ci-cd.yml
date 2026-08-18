@@ -242,17 +242,20 @@ jobs:
             -p "$SSH_PORT" \
             "$SSH_USER@$SSH_HOST" \
             "cd /opt/apps/lexos && \
-            export IMAGE_TAG='${GITHUB_SHA}' && \
+            printf 'IMAGE_TAG=%s\n' '${GITHUB_SHA}' > .release.env && \
             docker compose \
               --env-file .env.prod \
+              --env-file .release.env \
               -f docker-compose.prod.yml \
               pull && \
             docker compose \
               --env-file .env.prod \
+              --env-file .release.env \
               -f docker-compose.prod.yml \
               up -d --remove-orphans && \
             docker compose \
               --env-file .env.prod \
+              --env-file .release.env \
               -f docker-compose.prod.yml \
               ps"
 

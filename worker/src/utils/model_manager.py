@@ -66,7 +66,7 @@ def get_tokenizer() -> Tokenizer:
             repo_id="intfloat/multilingual-e5-small",
             filename="onnx/tokenizer.json",
             cache_dir="/models/tokenizer",
-            token=os.getenv("HF_TOKEN")
+            token=os.getenv("HF_TOKEN") or None
         )
         _TOKENIZER = Tokenizer.from_file(tokenizer_path)
         logger.info("Native Tokenizer loaded successfully.")
@@ -91,7 +91,7 @@ def get_llm() -> Llama:
             repo_id="bartowski/Qwen_Qwen3-0.6B-GGUF",
             filename="Qwen_Qwen3-0.6B-Q4_K_M.gguf",
             cache_dir="/models/qwen3",
-            token=os.getenv("HF_TOKEN")
+            token=os.getenv("HF_TOKEN") or None
         )
         _LLM = Llama(
             model_path=model_path,
