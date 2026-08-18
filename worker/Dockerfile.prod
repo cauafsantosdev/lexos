@@ -1,0 +1,64 @@
+FROM python:3.14.5-slim AS builder
+
+WORKDIR /build
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    CMAKE_ARGS="-DGGML_NATIVE=OFF"
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        cmake \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+
+RUN python -m pip install --upgrade pip \
+    && python -m pip wheel \
+        --wheel-dir /wheels \
+        -r requirements.txt
+
+
+FROM python:3.14.5-slim AS production
+
+WORKDIR /app
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    OMP_NUM_THREADS=2 \
+    HF_HOME=/models \
+    FASTEMBED_CACHE_PATH=/models/fastembed
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libgomp1 \
+        libstdc++6 \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 lexos \
+    && useradd \
+        --uid 10001 \
+        --gid 10001 \
+        --create-home \
+        --shell /usr/sbin/nologin \
+        lexos
+
+COPY --from=builder /wheels /wheels
+COPY requirements.txt .
+
+RUN python -m pip install \
+        --no-index \
+        --find-links=/wheels \
+        -r requirements.txt \
+    && rm -rf /wheels
+
+COPY src/ ./src/
+
+RUN mkdir -p /models \
+    && chown -R lexos:lexos /app /models
+
+USER lexos
+
+CMD ["python", "src/main.py"]
