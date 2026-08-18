@@ -9,6 +9,8 @@ package main
 import (
 	"log"
 	"net/http"
+	"os"
+	"strings"
 
 	"lexos-gateway/internal/queue"
 	"lexos-gateway/internal/routes"
@@ -18,6 +20,28 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 	"golang.org/x/time/rate"
 )
+
+// envList parses a comma-separated environment variable into a cleaned list.
+func envList(name string, fallback []string) []string {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return fallback
+	}
+
+	values := make([]string, 0)
+	for _, value := range strings.Split(raw, ",") {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			values = append(values, value)
+		}
+	}
+
+	if len(values) == 0 {
+		return fallback
+	}
+
+	return values
+}
 
 func main() {
 	// Initialize Redis queue
@@ -32,10 +56,28 @@ func main() {
 
 	// Setup Echo
 	e := echo.New()
+	e.HideBanner = true
 
-	// Enable CORS
+	// Configure IP extraction based on TRUST_PROXY environment variable
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("TRUST_PROXY")), "true") {
+		e.IPExtractor = echo.ExtractIPFromXFFHeader()
+	} else {
+		e.IPExtractor = echo.ExtractIPDirect()
+	}
+
+	// Protect upload endpoints at the application boundary as defense in depth
+	maxRequestBodySize := strings.TrimSpace(os.Getenv("MAX_REQUEST_BODY_SIZE"))
+	if maxRequestBodySize == "" {
+		maxRequestBodySize = "50M"
+	}
+	e.Use(middleware.BodyLimit(maxRequestBodySize))
+
+	// Restrict browser access to configured frontend origins.
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
-		AllowOrigins: []string{"*"},
+		AllowOrigins: envList(
+			"CORS_ALLOWED_ORIGINS",
+			[]string{"http://localhost:3000"},
+		),
 		AllowMethods: []string{http.MethodGet, http.MethodPost, http.MethodOptions},
 		AllowHeaders: []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept},
 	}))
