@@ -244,6 +244,9 @@ go.work.sum
 
 # env file
 .env
+.env.*
+!.env.example
+!.env.prod.example
 
 # Editor/IDE
 # .idea/

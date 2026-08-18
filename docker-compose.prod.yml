@@ -1,0 +1,137 @@
+services:
+  lexos-frontend:
+    image: ghcr.io/cauafsantosdev/lexos-frontend:${IMAGE_TAG:?IMAGE_TAG is required}
+    restart: unless-stopped
+    init: true
+
+    expose:
+      - "3000"
+
+    environment:
+      NODE_ENV: production
+      NEXT_TELEMETRY_DISABLED: "1"
+
+    networks:
+      vps-edge:
+        aliases:
+          - lexos-frontend
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    cpus: "0.50"
+    mem_limit: 384m
+
+
+  lexos-gateway:
+    image: ghcr.io/cauafsantosdev/lexos-gateway:${IMAGE_TAG:?IMAGE_TAG is required}
+    restart: unless-stopped
+    init: true
+
+    expose:
+      - "8000"
+
+    environment:
+      REDIS_URL: ${REDIS_URL:?REDIS_URL is required}
+
+      S3_ENDPOINT: ${S3_ENDPOINT:?S3_ENDPOINT is required}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:?S3_ACCESS_KEY is required}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:?S3_SECRET_KEY is required}
+      S3_BUCKET: ${S3_BUCKET:?S3_BUCKET is required}
+      S3_USE_SSL: ${S3_USE_SSL:-true}
+      S3_REGION: ${S3_REGION:-auto}
+      S3_AUTO_CREATE_BUCKET: "false"
+
+      CACHE_TTL_SECONDS: ${CACHE_TTL_SECONDS:-604800}
+      TASK_TTL_SECONDS: ${TASK_TTL_SECONDS:-86400}
+      PROCESSING_LOCK_TTL_SECONDS: ${PROCESSING_LOCK_TTL_SECONDS:-3600}
+
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?CORS_ALLOWED_ORIGINS is required}
+      TRUST_PROXY: ${TRUST_PROXY:-true}
+      MAX_REQUEST_BODY_SIZE: ${MAX_REQUEST_BODY_SIZE:-50M}
+
+    networks:
+      vps-edge:
+        aliases:
+          - lexos-gateway
+      vps-data:
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -qO- http://127.0.0.1:8000/health >/dev/null || exit 1"
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    cpus: "0.50"
+    mem_limit: 256m
+
+
+  lexos-worker:
+    image: ghcr.io/cauafsantosdev/lexos-worker:${IMAGE_TAG:?IMAGE_TAG is required}
+    restart: unless-stopped
+    init: true
+
+    # Allows an already-popped CPU-bound task to finish before Docker replaces
+    # the worker during deployment.
+    stop_grace_period: 10m
+
+    environment:
+      REDIS_URL: ${REDIS_URL:?REDIS_URL is required}
+
+      OMP_NUM_THREADS: ${OMP_NUM_THREADS:-2}
+      HF_HOME: ${HF_HOME:-/models}
+      FASTEMBED_CACHE_PATH: ${FASTEMBED_CACHE_PATH:-/models/fastembed}
+      HF_TOKEN: ${HF_TOKEN:-}
+
+      S3_ENDPOINT: ${S3_ENDPOINT:?S3_ENDPOINT is required}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:?S3_ACCESS_KEY is required}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:?S3_SECRET_KEY is required}
+      S3_BUCKET: ${S3_BUCKET:?S3_BUCKET is required}
+      S3_USE_SSL: ${S3_USE_SSL:-true}
+      S3_REGION: ${S3_REGION:-auto}
+
+      CACHE_TTL_SECONDS: ${CACHE_TTL_SECONDS:-604800}
+      TASK_TTL_SECONDS: ${TASK_TTL_SECONDS:-86400}
+
+    volumes:
+      - ./models:/models
+
+    networks:
+      vps-data:
+
+    healthcheck:
+      test: ["CMD", "python", "src/healthcheck.py"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+    # Preserve the production constraint already tested during Lexos
+    # development: one worker and two CPU inference threads.
+    cpus: "2.00"
+    mem_limit: 2500m
+
+
+networks:
+  vps-edge:
+    external: true
+    name: vps-edge
+
+  vps-data:
+    external: true
+    name: vps-data

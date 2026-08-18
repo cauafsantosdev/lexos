@@ -1,23 +1,29 @@
 {
-  "Rules": [
+  "rules": [
     {
-      "ID": "lexos-raw-expire-1d",
-      "Status": "Enabled",
-      "Filter": {
-        "Prefix": "raw/"
+      "id": "lexos-raw-expire-1d",
+      "enabled": true,
+      "conditions": {
+        "prefix": "raw/"
       },
-      "Expiration": {
-        "Days": 1
+      "deleteObjectsTransition": {
+        "condition": {
+          "type": "Age",
+          "maxAge": 86400
+        }
       }
     },
     {
-      "ID": "lexos-cache-expire-8d",
-      "Status": "Enabled",
-      "Filter": {
-        "Prefix": "cache/"
+      "id": "lexos-cache-expire-8d",
+      "enabled": true,
+      "conditions": {
+        "prefix": "cache/"
       },
-      "Expiration": {
-        "Days": 8
+      "deleteObjectsTransition": {
+        "condition": {
+          "type": "Age",
+          "maxAge": 691200
+        }
       }
     }
   ]
