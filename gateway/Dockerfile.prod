@@ -1,0 +1,33 @@
+FROM golang:1.26.4-alpine AS builder
+
+WORKDIR /src
+
+RUN apk add --no-cache git
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -trimpath \
+    -ldflags="-s -w" \
+    -o /out/lexos-gateway \
+    ./cmd/server
+
+
+FROM alpine:3.23 AS production
+
+RUN apk add --no-cache ca-certificates tzdata \
+    && addgroup -S lexos \
+    && adduser -S -G lexos lexos
+
+WORKDIR /app
+
+COPY --from=builder /out/lexos-gateway /usr/local/bin/lexos-gateway
+
+USER lexos
+
+EXPOSE 8000
+
+ENTRYPOINT ["lexos-gateway"]
