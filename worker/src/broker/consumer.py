@@ -1,7 +1,8 @@
-import json
 import os
-from datetime import datetime, timezone
+import json
 import redis
+import signal
+from datetime import datetime, timezone
 from services.scriber_service import transcribe_audio
 from services.distiller_service import process_summarization_task
 from services.gleaner_indexer_service import process_indexing_task
@@ -21,6 +22,30 @@ from utils.logger import get_logger
 # Initialize the worker-specific logger once at module import.
 logger = get_logger("consumer")
 
+# Global flag to indicate if a shutdown signal has been received.
+_shutdown_requested = False
+
+def _handle_shutdown_signal(signum, _frame) -> None:
+    """
+    Requests graceful worker shutdown after the active task finishes.
+
+    Args:
+        signum (int): Operating-system signal number.
+        _frame: Current Python stack frame supplied by the signal module.
+
+    Returns:
+        None: The signal only changes worker shutdown state.
+    """
+    global _shutdown_requested
+
+    if not _shutdown_requested:
+        logger.info(
+            "Received shutdown signal %s. "
+            "Worker will exit after the active task completes.",
+            signum,
+        )
+
+    _shutdown_requested = True
 
 def _redis_client():
     """
@@ -178,6 +203,13 @@ def start_worker():
     Returns:
         None: The loop continues until the process receives an external stop signal.
     """
+    global _shutdown_requested
+    _shutdown_requested = False
+
+    # Register signal handlers for graceful shutdown on SIGTERM and SIGINT.
+    signal.signal(signal.SIGTERM, _handle_shutdown_signal)
+    signal.signal(signal.SIGINT, _handle_shutdown_signal)
+
     redis_client = _redis_client()
     # Keep all CPU-bound workloads behind the same controlled consumer loop.
     queues = [
@@ -189,7 +221,7 @@ def start_worker():
     logger.info(f"Listening for tasks on: {', '.join(queues)}...")
 
     # Process one queued workload at a time to preserve the configured CPU/RAM budget.
-    while True:
+    while not _shutdown_requested:
         temp_local_file = None
         task_hash = None
         task_id = None
@@ -289,3 +321,5 @@ def start_worker():
             # Remove temporary downloads after every success or failure path.
             if temp_local_file and os.path.exists(temp_local_file):
                 os.remove(temp_local_file)
+
+    logger.info("Lexos Worker stopped gracefully.")
