@@ -1,0 +1,278 @@
+name: Lexos CI/CD
+
+on:
+  push:
+    branches:
+      - main
+
+  pull_request:
+    branches:
+      - main
+
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAMESPACE: cauafsantosdev
+
+  NEXT_PUBLIC_API_URL: https://api.lexos.cauafsantos.dev
+  NEXT_PUBLIC_GITHUB_URL: https://github.com/cauafsantosdev/lexos
+
+
+jobs:
+  test-gateway:
+    name: Go Gateway Tests
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: ./gateway
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.4"
+          cache-dependency-path: gateway/go.sum
+
+      - name: Download Dependencies
+        run: go mod download
+
+      - name: Run Tests
+        run: go test -v ./...
+
+
+  test-worker:
+    name: Python Worker Tests
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: ./worker
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14.5"
+          cache: pip
+          cache-dependency-path: |
+            worker/requirements.txt
+            worker/requirements-dev.txt
+
+      - name: Install Dependencies
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Run Tests
+        run: python -m pytest -v
+
+
+  check-frontend:
+    name: Frontend Checks
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: ./frontend
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Type Check
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Production Build
+        env:
+          NEXT_PUBLIC_API_URL: ${{ env.NEXT_PUBLIC_API_URL }}
+          NEXT_PUBLIC_GITHUB_URL: ${{ env.NEXT_PUBLIC_GITHUB_URL }}
+        run: npm run build
+
+
+  build-images:
+    name: Build and Publish Images
+    runs-on: ubuntu-latest
+
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    needs:
+      - test-gateway
+      - test-worker
+      - check-frontend
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v6
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and Push Gateway
+        uses: docker/build-push-action@v6
+        with:
+          context: ./gateway
+          file: ./gateway/Dockerfile.prod
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ env.IMAGE_NAMESPACE }}/lexos-gateway:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=lexos-gateway
+          cache-to: type=gha,mode=max,scope=lexos-gateway
+
+      - name: Build and Push Worker
+        uses: docker/build-push-action@v6
+        with:
+          context: ./worker
+          file: ./worker/Dockerfile.prod
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ env.IMAGE_NAMESPACE }}/lexos-worker:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=lexos-worker
+          cache-to: type=gha,mode=max,scope=lexos-worker
+
+      - name: Build and Push Frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile.prod
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            NEXT_PUBLIC_API_URL=${{ env.NEXT_PUBLIC_API_URL }}
+            NEXT_PUBLIC_GITHUB_URL=${{ env.NEXT_PUBLIC_GITHUB_URL }}
+          tags: |
+            ghcr.io/${{ env.IMAGE_NAMESPACE }}/lexos-frontend:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=lexos-frontend
+          cache-to: type=gha,mode=max,scope=lexos-frontend
+
+
+  deploy-production:
+    name: Deploy Production
+    runs-on: ubuntu-latest
+
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    needs:
+      - build-images
+
+    environment:
+      name: production
+      url: https://lexos.cauafsantos.dev
+
+    concurrency:
+      group: lexos-production
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v6
+
+      - name: Configure Deployment SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.PROD_SSH_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/lexos_deploy
+          chmod 600 ~/.ssh/lexos_deploy
+
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Upload Production Compose
+        env:
+          SSH_HOST: ${{ secrets.PROD_SSH_HOST }}
+          SSH_PORT: ${{ secrets.PROD_SSH_PORT }}
+          SSH_USER: ${{ secrets.PROD_SSH_USER }}
+        run: |
+          scp \
+            -i ~/.ssh/lexos_deploy \
+            -P "$SSH_PORT" \
+            docker-compose.prod.yml \
+            "$SSH_USER@$SSH_HOST:/opt/apps/lexos/docker-compose.prod.yml"
+
+      - name: Deploy Commit
+        env:
+          SSH_HOST: ${{ secrets.PROD_SSH_HOST }}
+          SSH_PORT: ${{ secrets.PROD_SSH_PORT }}
+          SSH_USER: ${{ secrets.PROD_SSH_USER }}
+        run: |
+          ssh \
+            -i ~/.ssh/lexos_deploy \
+            -p "$SSH_PORT" \
+            "$SSH_USER@$SSH_HOST" \
+            "cd /opt/apps/lexos && \
+            export IMAGE_TAG='${GITHUB_SHA}' && \
+            docker compose \
+              --env-file .env.prod \
+              -f docker-compose.prod.yml \
+              pull && \
+            docker compose \
+              --env-file .env.prod \
+              -f docker-compose.prod.yml \
+              up -d --remove-orphans && \
+            docker compose \
+              --env-file .env.prod \
+              -f docker-compose.prod.yml \
+              ps"
+
+      - name: Verify Public Gateway
+        run: |
+          curl \
+            --fail \
+            --show-error \
+            --silent \
+            --retry 12 \
+            --retry-delay 5 \
+            https://api.lexos.cauafsantos.dev/health
+
+      - name: Verify Public Frontend
+        run: |
+          curl \
+            --fail \
+            --show-error \
+            --silent \
+            --output /dev/null \
+            --retry 12 \
+            --retry-delay 5 \
+            https://lexos.cauafsantos.dev/
